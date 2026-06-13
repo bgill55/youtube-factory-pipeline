@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "youtube-factory-pipeline"
+version = "0.1.0"
+description = "Modular pipeline agents for automated YouTube video production"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [
+    {name = "bgill55", email = "bgill55@users.noreply.github.com"}
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Video",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "httpx>=0.25",
+    "python-dotenv>=1.0",
+    "google-api-python-client>=2.100",
+    "google-auth-oauthlib>=1.1",
+    "google-auth-httplib2>=0.1",
+    "pillow>=10.0",
+    "numpy>=1.24",
+    "croniter>=2.0",
+    "requests>=2.31",
+]
+optional-dependencies = { "omnivoice" = ["torch>=2.0", "torchaudio>=2.0"], "stable_audio" = ["torch>=2.0", "transformers>=4.30", "soundfile>=0.12"], "dev" = ["pytest>=7.4", "ruff>=0.1", "mypy>=1.0"], "all" = ["torch>=2.0", "torchaudio>=2.0", "transformers>=4.30", "soundfile>=0.12"] }
+
+[project.urls]
+Homepage = "https://github.com/bgill55/youtube-factory-pipeline"
+Repository = "https://github.com/bgill55/youtube-factory-pipeline"
+Issues = "https://github.com/bgill55/youtube-factory-pipeline/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["youtube_factory*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_ignores = true
