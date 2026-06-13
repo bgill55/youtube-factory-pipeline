@@ -4,7 +4,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/youtube-factory-pipeline.svg)](https://pypi.org/project/youtube-factory-pipeline/)
 [![Python](https://img.shields.io/pypi/pyversions/youtube-factory-pipeline.svg)](https://pypi.org/project/youtube-factory-pipeline/)
-[![License](https://img.shields.io/github/license/bgill55/youtube-factory-pipeline.svg)](LICENSE)
+[![License](https://img.shields.io/pypi/l/youtube-factory-pipeline.svg)](https://pypi.org/project/youtube-factory-pipeline/)
 
 ---
 
