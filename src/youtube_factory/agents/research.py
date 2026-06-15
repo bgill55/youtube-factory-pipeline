@@ -2,9 +2,11 @@ import os
 import json
 import re
 import requests
+import subprocess
 from urllib.parse import urlparse
 from youtube_factory.llm import query_llm as _query_llm
 from youtube_factory.prompts import get_system_prompt
+
 
 class ResearchAgent:
     def __init__(self, config):
@@ -14,6 +16,168 @@ class ResearchAgent:
         if self.github_token:
             self.session.headers.update({"Authorization": f"token {self.github_token}"})
         self.session.headers.update({"User-Agent": "YouTube-Factory-Research-Agent"})
+        
+        # Ensure gh CLI, mcporter (npm global) are in PATH
+        self._gh_path = "/c/Program Files/GitHub CLI"
+        self._npm_path = "/c/Users/brica/AppData/Roaming/npm"
+        self._env = os.environ.copy()
+        paths_to_add = []
+        for p in [self._gh_path, self._npm_path]:
+            if p and p not in self._env.get("PATH", ""):
+                paths_to_add.append(p)
+        if paths_to_add:
+            self._env["PATH"] = ":".join(paths_to_add) + ":" + self._env["PATH"]
+
+    def _run_cmd(self, cmd, timeout=60, parse_json=False):
+        """Run a command and return stdout, optionally parsing as JSON."""
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                env=self._env,
+                shell=False
+            )
+            if result.returncode == 0:
+                stdout = result.stdout.strip()
+                if parse_json and stdout:
+                    return json.loads(stdout)
+                return stdout
+            else:
+                print(f"[Research Agent] Command failed: {' '.join(cmd)} - {result.stderr}")
+                return None
+        except subprocess.TimeoutExpired:
+            print(f"[Research Agent] Command timed out: {' '.join(cmd)}")
+            return None
+        except json.JSONDecodeError as e:
+            print(f"[Research Agent] JSON parse error: {e}")
+            return None
+        except Exception as e:
+            print(f"[Research Agent] Command error: {e}")
+            return None
+
+    def _fetch_youtube_transcript(self, url):
+        """Fetch YouTube transcript using yt-dlp directly."""
+        print(f"[Research Agent] Fetching YouTube transcript via yt-dlp: {url}")
+        cmd = [
+            "yt-dlp",
+            "--write-auto-sub",
+            "--sub-lang", "en",
+            "--skip-download",
+            "--print-json",
+            "--no-warnings",
+            url
+        ]
+        result = self._run_cmd(cmd, timeout=120, parse_json=True)
+        if result:
+            transcript = ""
+            # Try to get auto-generated subtitles
+            if result.get("automatic_captions"):
+                # yt-dlp doesn't download subs with --print-json, need separate call
+                pass
+            
+            # Get description and title
+            return {
+                "type": "youtube",
+                "title": result.get("title", ""),
+                "content": result.get("description", "")[:8000],
+                "duration": result.get("duration", 0),
+                "channel": result.get("uploader", ""),
+                "url": url,
+                "video_id": result.get("id", "")
+            }
+        return None
+
+    def _fetch_youtube_subtitles(self, url):
+        """Fetch YouTube subtitles using yt-dlp."""
+        print(f"[Research Agent] Fetching YouTube subtitles via yt-dlp: {url}")
+        cmd = [
+            "yt-dlp",
+            "--write-auto-sub",
+            "--sub-lang", "en",
+            "--sub-format", "vtt",
+            "--skip-download",
+            "--no-warnings",
+            "-o", "-",  # output to stdout
+            url
+        ]
+        result = self._run_cmd(cmd, timeout=120)
+        if result:
+            # Parse VTT format
+            lines = result.splitlines()
+            text_lines = []
+            for line in lines:
+                if line and not line.startswith("WEBVTT") and not line.strip().replace(".", "").isdigit() and "-->" not in line:
+                    text_lines.append(line)
+            transcript = " ".join(text_lines)
+            return transcript[:15000] if transcript else None
+        return None
+
+    def _fetch_web_article(self, url):
+        """Fetch web article using Jina Reader."""
+        print(f"[Research Agent] Fetching web article via Jina Reader: {url}")
+        jina_url = f"https://r.jina.ai/{url}"
+        result = self._run_cmd(["curl", "-s", "-L", jina_url], timeout=30)
+        if result and len(result) > 100:
+            return {
+                "type": "article",
+                "title": "",
+                "content": result[:8000],
+                "url": url
+            }
+        return None
+
+    def _search_exa(self, query):
+        """Semantic web search using Exa via mcporter MCP."""
+        print(f"[Research Agent] Exa search via mcporter: {query}")
+        # Use mcporter to call Exa MCP with flag-style args
+        cmd = [
+            "mcporter.cmd", "--config", "C:\\Users\\brica\\config\\mcporter.json",
+            "call", "exa.web_search_exa",
+            f'query={query}', 'numResults=5'
+        ]
+        result = self._run_cmd(cmd, timeout=60)
+        if result:
+            # mcporter outputs text format, parse it
+            formatted = []
+            # Split by --- separator
+            for section in result.split("\n---\n"):
+                if section.strip():
+                    formatted.append(section.strip())
+            return {
+                "type": "search",
+                "query": query,
+                "content": "\n\n---\n\n".join(formatted[:5]),
+                "results": []
+            }
+        return None
+
+    def _fetch_rss(self, url):
+        """Fetch RSS feed using feedparser."""
+        print(f"[Research Agent] Fetching RSS via feedparser: {url}")
+        try:
+            import feedparser
+            feed = feedparser.parse(url)
+            entries = []
+            for e in feed.entries[:10]:
+                entries.append({
+                    "title": e.get("title", ""),
+                    "link": e.get("link", ""),
+                    "summary": e.get("summary", "")[:500]
+                })
+            formatted = []
+            for e in entries:
+                formatted.append(f"Title: {e['title']}\nLink: {e['link']}\nSummary: {e['summary']}")
+            return {
+                "type": "rss",
+                "title": feed.feed.get("title", ""),
+                "content": "\n\n---\n\n".join(formatted),
+                "entries": entries
+            }
+        except Exception as e:
+            print(f"[Research Agent] feedparser error: {e}")
+            return None
 
     def _safe_get(self, url, **kwargs):
         """Safe GET with timeout and error handling."""
@@ -108,6 +272,29 @@ class ResearchAgent:
                 file_contents[item["path"]] = content
         return file_contents
 
+    def _fetch_gh_repo(self, owner, repo):
+        """Fetch GitHub repo using gh CLI."""
+        print(f"[Research Agent] Fetching GitHub repo via gh CLI: {owner}/{repo}")
+        cmd = ["gh", "repo", "view", f"{owner}/{repo}", "--json", "name,description,url,stargazerCount,primaryLanguage"]
+        result = self._run_cmd(cmd, timeout=30, parse_json=True)
+        if result:
+            # Fetch README via gh api
+            readme_cmd = ["gh", "api", f"repos/{owner}/{repo}/readme"]
+            readme_result = self._run_cmd(readme_cmd, timeout=30, parse_json=True)
+            readme = ""
+            if readme_result and readme_result.get("content"):
+                import base64
+                readme = base64.b64decode(readme_result["content"]).decode("utf-8", errors="ignore")
+            return {
+                "type": "github",
+                "title": result.get("name", ""),
+                "content": readme[:8000] or result.get("description", ""),
+                "url": result.get("url", ""),
+                "stars": result.get("stargazerCount", 0),
+                "language": result.get("primaryLanguage", {}).get("name", "") if result.get("primaryLanguage") else ""
+            }
+        return None
+
     def _fetch_generic_url(self, url):
         """Fetch and extract content from generic URL using trafilatura if available."""
         try:
@@ -116,7 +303,9 @@ class ResearchAgent:
             if downloaded:
                 extracted = trafilatura.extract(downloaded, include_comments=False, include_tables=False)
                 if extracted:
-                    return {"type": "article", "content": extracted[:8000], "title": trafilatura.extract_metadata(downloaded).title if trafilatura.extract_metadata(downloaded) else ""}
+                    meta = trafilatura.extract_metadata(downloaded)
+                    title = meta.title if meta else ""
+                    return {"type": "article", "content": extracted[:8000], "title": title}
         except ImportError:
             pass
         except Exception as e:
@@ -212,28 +401,57 @@ class ResearchAgent:
             "is_url_source": True
         }
 
-        if "github.com" in hostname:
-            owner, repo = self._extract_github_info(topic_seed)
-            if owner and repo:
-                print(f"[Research Agent] Fetching GitHub repo: {owner}/{repo}")
-                repo_data = self._fetch_github_repo(owner, repo)
-                readme = self._fetch_github_readme(owner, repo)
-                key_files = self._fetch_key_files(owner, repo)
-
-                research_data["project_name"] = repo_data.get("name", repo) if repo_data else repo
-                research_data["readme_summary"] = readme[:3000] if readme else ""
-
+        # YouTube - use yt-dlp for transcript extraction
+        if "youtube.com" in hostname or "youtu.be" in hostname:
+            result = self._fetch_youtube_transcript(topic_seed)
+            subtitles = self._fetch_youtube_subtitles(topic_seed)
+            if result:
+                content = (subtitles or "") + "\n\n" + (result.get("content", "") or "")
+                research_data["project_name"] = result.get("title", "YouTube Video")
+                research_data["readme_summary"] = content[:3000]
                 llm_result = self._summarize_with_llm(
-                    "github", repo_data.get("full_name", f"{owner}/{repo}") if repo_data else f"{owner}/{repo}",
-                    readme or repo_data.get("description", "") if repo_data else "",
-                    topic_seed,
-                    key_files
+                    "youtube", research_data["project_name"], content, topic_seed
                 )
                 if llm_result:
                     research_data.update(llm_result)
+
+        # GitHub - try gh CLI first, fallback to API
+        elif "github.com" in hostname:
+            owner, repo = self._extract_github_info(topic_seed)
+            if owner and repo:
+                print(f"[Research Agent] Fetching GitHub repo: {owner}/{repo}")
+                # Try gh CLI
+                gh_result = self._fetch_gh_repo(owner, repo)
+                if gh_result:
+                    research_data["project_name"] = gh_result.get("title", repo)
+                    research_data["readme_summary"] = gh_result.get("content", "")[:3000]
+                    llm_result = self._summarize_with_llm(
+                        "github", gh_result.get("title", f"{owner}/{repo}"),
+                        gh_result.get("content", ""), topic_seed
+                    )
+                    if llm_result:
+                        research_data.update(llm_result)
+                else:
+                    # Fallback to API
+                    repo_data = self._fetch_github_repo(owner, repo)
+                    readme = self._fetch_github_readme(owner, repo)
+                    key_files = self._fetch_key_files(owner, repo)
+
+                    research_data["project_name"] = repo_data.get("name", repo) if repo_data else repo
+                    research_data["readme_summary"] = readme[:3000] if readme else ""
+
+                    llm_result = self._summarize_with_llm(
+                        "github", repo_data.get("full_name", f"{owner}/{repo}") if repo_data else f"{owner}/{repo}",
+                        readme or repo_data.get("description", "") if repo_data else "",
+                        topic_seed,
+                        key_files
+                    )
+                    if llm_result:
+                        research_data.update(llm_result)
             else:
                 print("[Research Agent] Could not parse GitHub URL")
 
+        # HuggingFace
         elif "huggingface.co" in hostname or "hf.co" in hostname:
             print(f"[Research Agent] Fetching HuggingFace resource: {topic_seed}")
             api_url = topic_seed.replace("https://huggingface.co", "https://huggingface.co/api")
@@ -253,6 +471,7 @@ class ResearchAgent:
             if llm_result:
                 research_data.update(llm_result)
 
+        # arXiv
         elif "arxiv.org" in hostname:
             print(f"[Research Agent] Fetching arXiv paper: {topic_seed}")
             arxiv_id_match = re.search(r"(\d{4}\.\d{4,5}(?:v\d+)?)", topic_seed)
@@ -280,9 +499,13 @@ class ResearchAgent:
             if llm_result:
                 research_data.update(llm_result)
 
+        # Generic web URL - use Jina Reader first, fallback to trafilatura/BS4
         else:
-            print(f"[Research Agent] Fetching generic URL: {topic_seed}")
-            result = self._fetch_generic_url(topic_seed)
+            result = self._fetch_web_article(topic_seed)
+            if not result:
+                print(f"[Research Agent] Jina Reader failed, falling back to trafilatura/BS4: {topic_seed}")
+                result = self._fetch_generic_url(topic_seed)
+            
             if result:
                 research_data["project_name"] = result.get("title", "Web Resource")
                 research_data["readme_summary"] = result.get("content", "")[:3000]
@@ -300,6 +523,7 @@ class ResearchAgent:
             print(f"[Research Agent] Saved research to {research_path}")
 
         return research_data
+
 
 def research_url(config, url, run_dir=None, workspace_dir=None):
     agent = ResearchAgent(config)

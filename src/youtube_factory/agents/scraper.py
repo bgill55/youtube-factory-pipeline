@@ -14,6 +14,19 @@ except ImportError:
     HAS_PLAYWRIGHT = False
 
 
+import sys
+import builtins
+
+def safe_print(*args, **kwargs):
+    try:
+        text = " ".join(str(a) for a in args)
+        builtins.print(text, **kwargs)
+    except Exception:
+        pass
+
+print = safe_print
+
+
 class WebsiteScraper:
     """Crawls a website, extracts article content for video script sourcing."""
 

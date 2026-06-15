@@ -4,7 +4,7 @@ import time
 import datetime
 import threading
 from croniter import croniter
-from youtube_factory.orchestrator import PipelineOrchestrator
+from pipeline.orchestrator import PipelineOrchestrator
 
 class BackgroundScheduler:
     def __init__(self, workspace_dir=None, orchestrator=None):

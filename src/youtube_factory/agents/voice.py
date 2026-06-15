@@ -7,6 +7,7 @@ import threading
 import requests
 import edge_tts
 
+
 class VoiceoverAgent:
     def __init__(self, config):
         self.config = config
@@ -14,23 +15,22 @@ class VoiceoverAgent:
     def get_audio_duration(self, file_path):
         """Uses ffprobe to get the duration of an audio file in seconds."""
         cmd = [
-            "ffprobe", 
-            "-v", "error", 
-            "-show_entries", "format=duration", 
-            "-of", "default=noprint_wrappers=1:nokey=1", 
+            "ffprobe",
+            "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
             file_path
         ]
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=30)
             return float(result.stdout.strip())
         except Exception as e:
-            # Fallback estimation if ffprobe fails (average 150 words per minute -> 2.5 words per second)
             return 2.0
 
     def generate_tts_elevenlabs(self, text, output_file):
         el_config = self.config.get("elevenlabs", {})
         api_key = el_config.get("api_key")
-        voice_id = el_config.get("voice_id", "21m00Tcm4TlvDq8ikWAM") # Default voice
+        voice_id = el_config.get("voice_id", "21m00Tcm4TlvDq8ikWAM")
 
         if not api_key or api_key == "YOUR_ELEVENLABS_API_KEY":
             raise ValueError("ElevenLabs API Key is not configured.")
@@ -52,12 +52,11 @@ class VoiceoverAgent:
         response = requests.post(url, json=payload, headers=headers)
         if response.status_code != 200:
             raise Exception(f"ElevenLabs TTS failed with status {response.status_code}: {response.text}")
-        
+
         with open(output_file, "wb") as f:
             f.write(response.content)
 
     def generate_tts_edgetts(self, text, output_file, srt_output_file=None):
-        """Generate TTS with optional word-level SRT using edge_tts SubMaker."""
         fallback_config = self.config.get("voice_fallback", {})
         voice = fallback_config.get("tts_voice", "en-US-GuyNeural")
         tts_timeout = self.config.get("voice_fallback", {}).get("tts_timeout", 60)
@@ -95,20 +94,18 @@ class VoiceoverAgent:
 
         sub_maker = result[0]
 
-        # Save word-level SRT if requested
         if srt_output_file and sub_maker:
             try:
                 subs = sub_maker.get_srt()
                 if subs and subs.strip():
                     with open(srt_output_file, "w", encoding="utf-8") as f:
                         f.write(subs)
-                    return True  # Signal that real SRT was written
+                    return True
             except Exception as e:
                 print(f"[Voice Agent] SubMaker SRT generation failed: {e}")
         return False
 
     def generate_tts_omnivoice(self, text, output_file, srt_output_file=None):
-        """Generate local TTS using OmniVoice-Studio standard OpenAI API and alignment."""
         ov_config = self.config.get("omnivoice", {})
         base_url = ov_config.get("base_url", "http://127.0.0.1:3900/v1")
         voice_id = ov_config.get("voice_id", "default")
@@ -116,13 +113,10 @@ class VoiceoverAgent:
         language = ov_config.get("language")
         speed = ov_config.get("speed", 1.0)
 
-        # Import OpenAI client dynamically
         from openai import OpenAI
-        
-        # 1. Synthesize speech
+
         client = OpenAI(base_url=base_url, api_key="local-omnivoice")
-        
-        # Build options
+
         opts = {
             "model": model_name,
             "voice": voice_id,
@@ -138,21 +132,17 @@ class VoiceoverAgent:
             for chunk in response.iter_bytes():
                 f.write(chunk)
 
-        # 2. Get word-level alignments if srt_output_file is requested
         if srt_output_file:
             try:
-                # Raw HTTP request to /v1/audio/transcriptions to guarantee we get the raw json (including words)
                 import requests
                 url = f"{base_url}/audio/transcriptions"
                 with open(output_file, "rb") as audio_file:
                     files = {"file": (os.path.basename(output_file), audio_file, "audio/mpeg")}
                     data = {"model": "whisper-1", "response_format": "verbose_json"}
                     trans_response = requests.post(url, files=files, data=data)
-                
+
                 if trans_response.status_code == 200:
                     result = trans_response.json()
-                    
-                    # Convert WhisperX word timings to edge-tts like SRT format
                     words = []
                     for seg in result.get("segments", []):
                         for w in seg.get("words", []):
@@ -161,14 +151,14 @@ class VoiceoverAgent:
                             w_end = w.get("end")
                             if w_text is not None and w_start is not None and w_end is not None:
                                 words.append((w_text.strip(), w_start, w_end))
-                    
+
                     if words:
                         srt_lines = []
                         for idx, (w_text, start_sec, end_sec) in enumerate(words, 1):
                             start_str = self._format_seconds_to_srt(start_sec)
                             end_str = self._format_seconds_to_srt(end_sec)
-                            srt_lines.append(f"{idx}\n{start_str} --> {end_str}\n{w_text}\n")
-                            
+                            srt_lines.append(f"{idx}\n{start_str} --> {end_sec}\n{w_text}\n")
+
                         with open(srt_output_file, "w", encoding="utf-8") as srt_f:
                             srt_f.write("\n".join(srt_lines))
                         return True
@@ -177,7 +167,6 @@ class VoiceoverAgent:
         return False
 
     def _format_seconds_to_srt(self, seconds):
-        """Format seconds as SRT timestamp: HH:MM:SS,mmm"""
         h = int(seconds // 3600)
         m = int((seconds % 3600) // 60)
         s = int(seconds % 60)
@@ -197,7 +186,7 @@ class VoiceoverAgent:
         from google.genai import types
 
         client = genai.Client(api_key=api_key)
-        
+
         response = client.models.generate_content(
             model=model_name,
             contents=text,
@@ -213,23 +202,83 @@ class VoiceoverAgent:
             ),
         )
         audio_data = response.candidates[0].content.parts[0].inline_data.data
-        
-        # Save as temporary WAV and convert to standard MP3
+
         temp_wav = output_file + ".tmp.wav"
         with open(temp_wav, "wb") as f:
             f.write(audio_data)
-            
+
         cmd = [
-            "ffmpeg", "-y", 
-            "-i", temp_wav, 
-            "-codec:a", "libmp3lame", 
-            "-b:a", "192k", 
+            "ffmpeg", "-y",
+            "-i", temp_wav,
+            "-codec:a", "libmp3lame",
+            "-b:a", "192k",
             output_file
         ]
         subprocess.run(cmd, capture_output=True, text=True, check=True)
-        
+
         if os.path.exists(temp_wav):
             os.remove(temp_wav)
+
+    def generate_tts_supertonic(self, text, output_file, srt_output_file=None):
+        st_config = self.config.get("supertonic", {})
+        base_url = st_config.get("base_url", "http://127.0.0.1:7788")
+        voice_name = st_config.get("voice_name", "M4")
+        total_steps = st_config.get("total_steps", 8)
+        speed = st_config.get("speed", 1.05)
+
+        url = f"{base_url}/v1/audio/speech"
+        headers = {"Content-Type": "application/json"}
+        payload = {
+            "model": "supertonic-3",
+            "input": text,
+            "voice": voice_name,
+            "response_format": "wav",
+            "extra_body": {
+                "total_steps": total_steps,
+                "speed": speed
+            }
+        }
+
+        response = requests.post(url, json=payload, headers=headers)
+        if response.status_code != 200:
+            raise Exception(f"Supertonic TTS failed with status {response.status_code}: {response.text}")
+
+        with open(output_file, "wb") as f:
+            f.write(response.content)
+
+        if srt_output_file:
+            try:
+                trans_url = f"{base_url}/v1/audio/transcriptions"
+                with open(output_file, "rb") as audio_file:
+                    files = {"file": (os.path.basename(output_file), audio_file, "audio/wav")}
+                    data = {"model": "whisper-1", "response_format": "verbose_json", "timestamp_granularities": "word"}
+                    trans_response = requests.post(trans_url, files=files, data=data)
+
+                if trans_response.status_code == 200:
+                    result = trans_response.json()
+                    words = []
+                    for seg in result.get("segments", []):
+                        for w in seg.get("words", []):
+                            w_text = w.get("word")
+                            w_start = w.get("start")
+                            w_end = w.get("end")
+                            if w_text is not None and w_start is not None and w_end is not None:
+                                words.append((w_text.strip(), w_start, w_end))
+
+                    if words:
+                        srt_lines = []
+                        for idx, (w_text, start_sec, end_sec) in enumerate(words, 1):
+                            start_str = self._format_seconds_to_srt(start_sec)
+                            end_str = self._format_seconds_to_srt(end_sec)
+                            srt_lines.append(f"{idx}\n{start_str} --> {end_sec}\n{w_text}\n")
+
+                        with open(srt_output_file, "w", encoding="utf-8") as srt_f:
+                            srt_f.write("\n".join(srt_lines))
+                        return True
+            except Exception as e:
+                print(f"[Voice Agent] Supertonic SRT alignment extraction failed: {e}, falling back to edge-tts")
+                return self.generate_tts_edgetts(text, output_file, srt_output_file=srt_output_file)
+        return False
 
     def run(self, inputs):
         script_output = inputs.get("script_output")
@@ -243,20 +292,18 @@ class VoiceoverAgent:
             script_content = f.read()
 
         # Parse script into scenes
-        # Scene triggers are lines starting with [Visual: ...]
-        # Speaker text lines are lines starting with [Narrator]: ...
         lines = script_content.splitlines()
         scenes = []
         current_visual = "Abstract introductory concept visual"
         current_spoken = []
 
-        for line in lines:
+        for i, line in enumerate(lines):
             line = line.strip()
             if not line:
                 continue
 
             # Ignore markdown dividers/horizontal rules (like ***, ---, ___ or just spaces)
-            if re.match(r'^[*\-_ ]+$', line):
+            if re.match(r'^[*\\-_ ]+$', line):
                 continue
 
             # Check for visual cue - handle both [Visual: ...] and [Visual]: ...
@@ -264,7 +311,6 @@ class VoiceoverAgent:
             if not visual_match:
                 visual_match = re.match(r"^\[Visual:\s*(.*)\]", line, re.IGNORECASE)
             if visual_match:
-                # If we have collected speech for a previous scene, save it
                 if current_spoken:
                     scenes.append({
                         "visual_description": current_visual,
@@ -279,10 +325,8 @@ class VoiceoverAgent:
             if narrator_match:
                 current_spoken.append(narrator_match.group(1).strip())
             elif line.startswith("[") and "]" in line:
-                # It might be another speaker or cue we should capture or ignore
                 pass
             elif not line.startswith("#") and not line.startswith("---"):
-                # If it's a bare line, and we are accumulating narrator, append it
                 if current_spoken:
                     current_spoken.append(line)
 
@@ -293,7 +337,6 @@ class VoiceoverAgent:
                 "spoken_text": " ".join(current_spoken)
             })
 
-        # Ensure we have at least one scene
         if not scenes:
             raise ValueError("No voiceover scenes or narrator lines could be parsed from the script.")
 
@@ -306,20 +349,16 @@ class VoiceoverAgent:
         for idx, scene in enumerate(scenes):
             scene_audio_filename = f"scene_{idx}.mp3"
             scene_audio_path = os.path.join(audio_dir, scene_audio_filename)
-            # Store SRT alongside the audio so video agent can use it directly
             scene_srt_path = os.path.join(run_dir, f"scene_{idx}_words.srt")
             spoken_text = scene["spoken_text"]
-            # Clean markdown characters (asterisks, underscores, etc.) to prevent them being spoken/printed
             spoken_text = re.sub(r'\*+', '', spoken_text)
             spoken_text = re.sub(r'_+', '', spoken_text)
-            # Remove any duplicate spaces left over
             spoken_text = re.sub(r'\s+', ' ', spoken_text).strip()
 
             voice_provider = self.config.get("voice_provider", "gemini")
             provider = "edge-tts"
             has_word_srt = False
 
-            # Generate TTS based on provider config
             if voice_provider == "gemini":
                 try:
                     self.generate_tts_gemini(spoken_text, scene_audio_path)
@@ -344,11 +383,28 @@ class VoiceoverAgent:
                     print(f"[Voice Agent] OmniVoice TTS failed for scene {idx}, falling back to Edge TTS. Error: {e}")
                     has_word_srt = self.generate_tts_edgetts(spoken_text, scene_audio_path, srt_output_file=scene_srt_path)
                     provider = "edge-tts"
+            elif voice_provider == "supertonic_http":
+                try:
+                    temp_wav = scene_audio_path.replace(".mp3", ".wav")
+                    has_word_srt = self.generate_tts_supertonic(spoken_text, temp_wav, srt_output_file=scene_srt_path)
+                    cmd = [
+                        "ffmpeg", "-y",
+                        "-i", temp_wav,
+                        "-codec:a", "libmp3lame",
+                        "-b:a", "192k",
+                        scene_audio_path
+                    ]
+                    subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=60)
+                    if os.path.exists(temp_wav):
+                        os.remove(temp_wav)
+                    provider = "supertonic"
+                except Exception as e:
+                    print(f"[Voice Agent] Supertonic TTS failed for scene {idx}, falling back to Edge TTS. Error: {e}")
+                    has_word_srt = self.generate_tts_edgetts(spoken_text, scene_audio_path, srt_output_file=scene_srt_path)
+                    provider = "edge-ttps"
             else:
-                # edge_tts primary — always capture word-level SRT
                 has_word_srt = self.generate_tts_edgetts(spoken_text, scene_audio_path, srt_output_file=scene_srt_path)
 
-            # Get exact duration
             duration = self.get_audio_duration(scene_audio_path)
             total_duration += duration
 
@@ -362,29 +418,25 @@ class VoiceoverAgent:
                 "word_srt_file": scene_srt_path if has_word_srt else None
             })
 
-        # Combine all audio files into a master audio track using FFmpeg concat
-        # We write a file list for ffmpeg concat demuxer
+        # Combine all audio files
         concat_list_path = os.path.join(audio_dir, "concat_list.txt")
         with open(concat_list_path, "w", encoding="utf-8") as f:
             for scene in processed_scenes:
-                # FFmpeg paths in text list should use forward slashes or escape backslashes
                 safe_path = scene["audio_file"].replace("\\", "/")
                 f.write(f"file '{safe_path}'\n")
 
         master_audio_path = os.path.join(audio_dir, "audio_master.mp3")
-        # Run FFmpeg to concatenate
         cmd = [
-            "ffmpeg", "-y", 
-            "-f", "concat", 
-            "-safe", "0", 
-            "-i", concat_list_path, 
-            "-c", "copy", 
+            "ffmpeg", "-y",
+            "-f", "concat",
+            "-safe", "0",
+            "-i", concat_list_path,
+            "-c", "copy",
             master_audio_path
         ]
-        
+
         subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=120)
 
-        # Save voice metadata in the run folder
         voice_meta_path = os.path.join(run_dir, "voice_metadata.json")
         output_metadata = {
             "audio_file": master_audio_path,

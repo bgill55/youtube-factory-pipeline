@@ -4,8 +4,8 @@ Now uses FreeLLMAPI as the unified router instead of direct provider calls.
 """
 import asyncio
 from typing import Optional
-from youtube_factory.freellmapi import FreeLLMAPIClient, FreeLLMAPIError, FreeLLMAPIResponse
-from youtube_factory.prompts import get_temperature
+from .freellmapi_client import FreeLLMAPIClient, FreeLLMAPIError, FreeLLMAPIResponse
+from .prompts import get_temperature
 
 
 # Global client instance for reuse

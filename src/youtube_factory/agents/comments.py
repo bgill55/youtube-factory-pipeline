@@ -148,7 +148,7 @@ class CommentAgent:
 
     def generate_reply(self, comment_text, video_title="", channel_name="Weight and See"):
         """Generate a reply to a comment using LLM."""
-        from youtube_factory.freellmapi import FreeLLMAPIClient
+        from pipeline.freellmapi_client import FreeLLMAPIClient
 
         freellmapi_cfg = self.config.get("freellmapi", {})
         llm_client = FreeLLMAPIClient(

@@ -7,14 +7,17 @@ import json
 import subprocess
 import numpy as np
 import unicodedata
-from youtube_factory.llm import query_llm as _query_llm
-from youtube_factory.prompts import get_system_prompt
+from pipeline.llm_utils import query_llm as _query_llm
+from pipeline.prompts import get_system_prompt
 
 
 def _safe_print(*args, **kwargs):
-    """Print that never crashes on Windows cp1252 consoles."""
-    text = " ".join(str(a) for a in args)
-    print(text.encode(sys.stdout.encoding or "utf-8", errors="replace").decode(sys.stdout.encoding or "utf-8", errors="replace"), **kwargs)
+    """Print that never crashes on Windows cp1252 consoles or detached stdout."""
+    try:
+        text = " ".join(str(a) for a in args)
+        print(text.encode(sys.stdout.encoding or "utf-8", errors="replace").decode(sys.stdout.encoding or "utf-8", errors="replace"), **kwargs)
+    except Exception:
+        pass
 
 
 def _normalize_text(text):

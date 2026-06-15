@@ -2,15 +2,18 @@ import os
 import sys
 import json
 import datetime
-from youtube_factory.llm import query_llm as _query_llm
-from youtube_factory.prompts import get_system_prompt
-from youtube_factory.seo import optimize_titles, generate_hashtags, research_competition
+from pipeline.llm_utils import query_llm as _query_llm
+from pipeline.prompts import get_system_prompt
+from pipeline.seo_utils import optimize_titles, generate_hashtags, research_competition
 
 
 def _safe_print(*args, **kwargs):
-    text = " ".join(str(a) for a in args)
-    enc = sys.stdout.encoding or "utf-8"
-    print(text.encode(enc, errors="replace").decode(enc, errors="replace"), **kwargs)
+    try:
+        text = " ".join(str(a) for a in args)
+        enc = sys.stdout.encoding or "utf-8"
+        print(text.encode(enc, errors="replace").decode(enc, errors="replace"), **kwargs)
+    except Exception:
+        pass
 
 
 def _normalize_text(text):
@@ -100,44 +103,165 @@ class IdeaGeneratorAgent:
         workspace_dir = inputs.get("workspace_dir")
         run_dir = inputs.get("run_dir")
 
+        # Check if user supplied a script in topic_seed or scraped_content user_notes
+        user_notes = ""
+        if scraped_content and isinstance(scraped_content, dict):
+            user_notes = scraped_content.get("user_notes", "")
+        
+        has_custom_script = (
+            "[Narrator]" in topic_seed or "[Visual:" in topic_seed or
+            "[Narrator]" in user_notes or "[Visual:" in user_notes
+        )
+        
+        if has_custom_script:
+            _safe_print("[IdeaGenerator] Custom script detected in inputs — bypassing LLM idea generation.")
+            script_text = topic_seed if ("[Narrator]" in topic_seed or "[Visual:" in topic_seed) else user_notes
+            
+            # Query LLM to generate professional metadata (description, keywords, tags, etc.) based on the user's custom script
+            concept_summary = "Running video from user-supplied custom script."
+            description = "This video was generated using a custom script supplied by the user."
+            keywords = ["custom script", "user video", "automation"]
+            tags = ["custom", "automation", "weight and see"]
+            suggested_title = None
+
+            try:
+                metadata_prompt = f"""You are an expert YouTube SEO specialist. Write metadata for a video based on the following user-supplied script:
+
+--- SCRIPT ---
+{script_text}
+---
+
+Generate the following in JSON format:
+{{
+  "title": "A compelling, high-CTR YouTube video title (under 70 characters) representing the script's theme.",
+  "concept_summary": "A 1-2 sentence hook summarizing the video's core message.",
+  "description": "An engaging, SEO-optimized YouTube video description (150-250 words) written in the channel's style. Emphasize the core message, key concepts like local AI sovereignty and model jailbreaks, and explain why this matters. Write naturally and avoid generic filler text.",
+  "keywords": ["5-10 key search terms relevant to this specific video"],
+  "tags": ["10-15 lowercase tags/hashtags for YouTube SEO"]
+}}
+"""
+                _safe_print("[IdeaGenerator] Querying LLM to generate SEO description and tags for custom script...")
+                meta_json = self.query_llm("You are a professional YouTube SEO specialist. Output JSON only.", metadata_prompt)
+                
+                # Clean up JSON if LLM returned markdown code blocks
+                clean_meta = meta_json.strip()
+                if clean_meta.startswith("```"):
+                    lines = clean_meta.splitlines()
+                    if len(lines) > 2:
+                        clean_meta = "\n".join(lines[1:-1])
+                
+                meta_data = json.loads(clean_meta)
+                suggested_title = meta_data.get("title")
+                concept_summary = meta_data.get("concept_summary", concept_summary)
+                description = meta_data.get("description", description)
+                keywords = meta_data.get("keywords", keywords)
+                tags = meta_data.get("tags", tags)
+            except Exception as e:
+                _safe_print(f"[IdeaGenerator] Failed to generate SEO metadata from LLM: {e}. Using generic fallbacks.")
+
+            title = "Custom Script Video"
+            if topic_seed and not ("[Narrator]" in topic_seed or "[Visual:" in topic_seed) and topic_seed.lower() != "[scraped]":
+                title = topic_seed
+            elif suggested_title:
+                title = suggested_title
+            else:
+                lines = [l.strip() for l in script_text.split("\n") if l.strip()]
+                for line in lines:
+                    if line.startswith("[Narrator]:"):
+                        title = line.replace("[Narrator]:", "").strip()
+                        title_words = title.split()
+                        if len(title_words) > 6:
+                            title = " ".join(title_words[:6]) + "..."
+                        break
+            
+            output_data = {
+                "status": "SUCCESS",
+                "selected_topic": title,
+                "concept_summary": concept_summary,
+                "keywords": keywords,
+                "video_goal": "Generate video using custom script.",
+                "description": description,
+                "tags": tags,
+                "featured_links": [],
+                "all_concepts": [{"title": title, "swot": {"strengths": "User-supplied script", "weaknesses": "None", "opportunities": "None", "threats": "None"}}]
+            }
+            
+            concept_path = os.path.join(run_dir, "selected_concept.json")
+            with open(concept_path, "w", encoding="utf-8") as f:
+                json.dump(output_data, f, indent=2)
+                
+            return output_data
+
+
+        # Continuation/rerun from prior concept when available
+        selected_concept = inputs.get("selected_concept")
+        if not isinstance(selected_concept, dict) or not selected_concept:
+            if run_dir and os.path.isdir(run_dir):
+                concept_path = os.path.join(run_dir, "selected_concept.json")
+                if os.path.exists(concept_path):
+                    _safe_print(f"[IdeaGenerator] Reusing prior concept from {concept_path}")
+                    try:
+                        with open(concept_path, "r", encoding="utf-8") as f:
+                            selected_concept = json.load(f)
+                        return selected_concept
+                    except Exception as e:
+                        _safe_print(f"[IdeaGenerator] Failed to load prior concept: {e}")
+
         # If seed is [scraped], derive topic from scraped content
         is_scraped_mode = topic_seed.strip().lower() == "[scraped]"
         if is_scraped_mode and scraped_content and isinstance(scraped_content, dict):
             pages = scraped_content.get("pages", [])
             base_url = scraped_content.get("base_url", "")
             total_words = scraped_content.get("total_words", 0)
+            user_notes = (scraped_content.get("user_notes") or "").strip()
             
             # Check if scraped content is too thin (likely a JS SPA)
             if total_words < 500:
                 _safe_print(f"[Idea Generator] Scraped content is thin ({total_words} words from {base_url})")
-                # Extract key product info from whatever we have
-                all_titles = []
-                all_headings = []
-                key_phrases = []
-                for p in pages:
-                    if p.get("title"):
-                        all_titles.append(p["title"])
-                    for h in p.get("headings", []):
-                        if h.get("text"):
-                            all_headings.append(h["text"])
-                    # Extract meaningful sentences from body (skip UI labels)
-                    body = p.get("body", "")
-                    for line in body.split("\n"):
-                        line = line.strip()
-                        # Skip short lines, UI labels, and placeholder text
-                        if len(line) > 30 and not line.isupper() and "appear here" not in line.lower() and "no " not in line.lower():
-                            key_phrases.append(line)
                 
-                title_str = ", ".join(all_titles[:3]) if all_titles else "this website"
-                phrase_str = ". ".join(key_phrases[:3]) if key_phrases else ""
-                heading_str = ", ".join(all_headings[:5]) if all_headings else ""
+                # Deterministic topic extraction from user_notes when pages are empty
+                user_notes_lower = user_notes.lower()
+                forced_topic = None
                 
-                topic_seed = f"Create a video about {title_str} from {base_url}"
-                if phrase_str:
-                    topic_seed += f" — {phrase_str}"
-                if heading_str:
-                    topic_seed += f" — features: {heading_str}"
-                _safe_print(f"[Idea Generator] Derived topic seed: {topic_seed[:150]}...")
+                # Detect specific known sources and force on-topic concepts
+                if "anthropic" in user_notes_lower and ("fable 5" in user_notes_lower or "mythos 5" in user_notes_lower or "government directive" in user_notes_lower):
+                    forced_topic = "The Great Anthropic Recall: The US Government's Export Control Directive Against Fable 5 and Mythos 5"
+                    _safe_print(f"[Idea Generator] Detected Anthropic government directive source — forcing on-topic concept")
+                elif "youtube-factory" in user_notes_lower or "pipelineorchestrator" in user_notes_lower or "weight and see" in user_notes_lower:
+                    forced_topic = "YouTube Factory Pipeline: A Self-Recursing Open-Source Video Production System"
+                    _safe_print(f"[Idea Generator] Detected YouTube Factory source — forcing recursive meta concept")
+                
+                if forced_topic:
+                    topic_seed = forced_topic
+                else:
+                    # Extract key product info from whatever we have
+                    all_titles = []
+                    all_headings = []
+                    key_phrases = []
+                    for p in pages:
+                        if p.get("title"):
+                            all_titles.append(p["title"])
+                        for h in p.get("headings", []):
+                            if h.get("text"):
+                                all_headings.append(h["text"])
+                        # Extract meaningful sentences from body (skip UI labels)
+                        body = p.get("body", "")
+                        for line in body.split("\n"):
+                            line = line.strip()
+                            # Skip short lines, UI labels, and placeholder text
+                            if len(line) > 30 and not line.isupper() and "appear here" not in line.lower() and "no " not in line.lower():
+                                key_phrases.append(line)
+                    
+                    title_str = ", ".join(all_titles[:3]) if all_titles else "this website"
+                    phrase_str = ". ".join(key_phrases[:3]) if key_phrases else ""
+                    heading_str = ", ".join(all_headings[:5]) if all_headings else ""
+                    
+                    topic_seed = f"Create a video about {title_str} from {base_url}"
+                    if phrase_str:
+                        topic_seed += f" — {phrase_str}"
+                    if heading_str:
+                        topic_seed += f" — features: {heading_str}"
+                    _safe_print(f"[Idea Generator] Derived topic seed: {topic_seed[:150]}...")
             else:
                 titles = [p.get("title", "") for p in pages if p.get("title")]
                 topic_seed = f"Create a video about: {', '.join(titles[:3])} (from {base_url})"
@@ -343,52 +467,85 @@ class IdeaGeneratorAgent:
 
         # Format scraped content if available
         scraped_context = ""
-        if scraped_content and isinstance(scraped_content, dict) and scraped_content.get("pages"):
-            pages = scraped_content["pages"]
-            # Filter out low-value pages
-            skip_keywords = ["terms of service", "privacy policy", "terms of use",
-                             "cookie", "legal", "login", "sign up", "register",
-                             "contact us", "about us", "faq"]
-            useful_pages = []
-            for p in pages:
-                title_lower = (p.get("title") or "").lower()
-                body_lower = (p.get("body") or "")[:200].lower()
-                if not any(kw in title_lower or kw in body_lower for kw in skip_keywords):
-                    if p.get("word_count", 0) >= 50:
-                        useful_pages.append(p)
+        if scraped_content and isinstance(scraped_content, dict):
+            pages = scraped_content.get("pages", []) or []
+            total_words = int(scraped_content.get("total_words", 0) or 0)
+            base_url = scraped_content.get("base_url", "") or ""
+            user_notes = scraped_content.get("user_notes", "") or ""
 
-            if useful_pages:
-                scraped_parts = [f"\n\n=== SOURCE MATERIAL (ONLY USE THIS — DO NOT USE TRENDING DATA) ==="]
-                scraped_parts.append(f"Website: {scraped_content.get('base_url', '')}")
-                scraped_parts.append(f"Articles: {len(useful_pages)} pages")
-                scraped_parts.append("")
-                
-                # Include user-provided notes (README, docs, etc.)
-                user_notes = scraped_content.get("user_notes", "")
-                if user_notes:
-                    scraped_parts.append("--- USER NOTES (README, docs, extra context) ---")
-                    scraped_parts.append(user_notes[:2000])
-                    scraped_parts.append("")
-                
-                scraped_parts.append("RULES: ALL 3 video concepts MUST be about this website or its products/features.")
-                scraped_parts.append("DO NOT suggest topics about random GPUs, unrelated models, or other platforms.")
-                scraped_parts.append("Write about what THIS WEBSITE does, how it works, why it matters.")
-                scraped_parts.append("")
-                for i, page in enumerate(useful_pages[:5]):
-                    title = page.get("title", "Untitled")
-                    body_preview = page.get("body", "")[:800]
-                    url = page.get("url", "")
-                    scraped_parts.append(f"--- Article {i+1}: {title} ---")
-                    scraped_parts.append(f"URL: {url}")
-                    scraped_parts.append(body_preview)
-                    scraped_parts.append("")
-                scraped_context = "\n".join(scraped_parts)
+            usable_source = bool(pages or user_notes.strip())
+            if not usable_source:
+                scraped_context = (
+                    f"\n\n=== SOURCE MATERIAL ===\n"
+                    f"- Source: {base_url}\n"
+                    "- Note: No parseable page body was extracted from this source.\n"
+                )
+
+            if pages:
+                # Filter out low-value pages
+                skip_keywords = ["terms of service", "privacy policy", "terms of use",
+                                 "cookie", "legal", "login", "sign up", "register",
+                                 "contact us", "about us", "faq"]
+                useful_pages = []
+                for p in pages:
+                    title_lower = (p.get("title") or "").lower()
+                    body_lower = (p.get("body") or "")[:200].lower()
+                    if not any(kw in title_lower or kw in body_lower for kw in skip_keywords):
+                        if int(p.get("word_count", 0) or 0) >= 50:
+                            useful_pages.append(p)
+
+                if useful_pages:
+                    scraped_parts = [
+                        "\n\n=== SOURCE MATERIAL (ONLY USE THIS — DO NOT USE TRENDING DATA) ===",
+                        f"Website: {base_url}",
+                        f"Articles: {len(useful_pages)} usable pages",
+                        "",
+                    ]
+                    if user_notes.strip():
+                        scraped_parts.extend([
+                            "--- USER NOTES (README/docs/extra context) ---",
+                            user_notes[:4000],
+                            "",
+                        ])
+                    scraped_parts.extend([
+                        "RULES: ALL 3 video concepts MUST be based on the source material below.",
+                        "Use tool/model names, claims, and quotes from the source.",
+                        "If the source mentions a government action, model recall, or security directive, make that the video focus.",
+                        "",
+                    ])
+                    for i, page in enumerate(useful_pages[:5]):
+                        title = page.get("title") or "Untitled"
+                        body_preview = (page.get("body") or "")[:1500]
+                        url = page.get("url") or base_url
+                        scraped_parts.append(f"--- Article {i+1}: {title} ---")
+                        scraped_parts.append(f"URL: {url}")
+                        scraped_parts.append(body_preview)
+                        scraped_parts.append("")
+                    scraped_context = "\n".join(scraped_parts)
+
+            if not scraped_context and user_notes.strip():
+                scraped_context = (
+                    "\n\n=== SOURCE MATERIAL (ONLY USE THIS — DO NOT USE TRENDING DATA) ===\n"
+                    f"Source: {base_url}\n"
+                    "--- USER NOTES (README/docs/extra context) ---\n"
+                    f"{user_notes[:4000]}\n"
+                )
 
         # 4. Build system prompt from centralized registry with dynamic data injection
+        topic_for_prompt = topic_seed
+        # Bias concept generation toward the real source content when in scraped mode
+        if is_scraped_mode and 'user_notes' in dir() and user_notes.strip():
+            topic_for_prompt = (
+                f"Generate concepts specifically about this source text: {base_url}. "
+                f"Use claims, organizations, product/model names, and quoted details from the USER NOTES below. "
+                f"Do not pivot the topic toward unrelated GPUs or general AI news. "
+                f"Source title hint: {all_titles[0] if 'all_titles' in dir() and all_titles else base_url}."
+            )
+
         system_prompt = get_system_prompt(
             "idea",
             current_date=current_date_str,
-            topic_seed=topic_seed,
+            topic_seed=topic_for_prompt,
             target_audience=target_audience,
             competitor_analysis=competitor_analysis,
             niche_list_content=niche_list_content,

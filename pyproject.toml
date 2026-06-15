@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "youtube-factory-pipeline"
-version = "0.1.2"
+version = "0.3.2"
 description = "Modular pipeline agents for automated YouTube video production"
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -32,6 +32,9 @@ dependencies = [
     "numpy>=1.24",
     "croniter>=2.0",
     "requests>=2.31",
+    "feedparser>=6.0",
+    "yt-dlp>=2024.0",
+    "agent-reach>=1.5.0",
 ]
 optional-dependencies = { "omnivoice" = ["torch>=2.0", "torchaudio>=2.0"], "stable_audio" = ["torch>=2.0", "transformers>=4.30", "soundfile>=0.12"], "dev" = ["pytest>=7.4", "ruff>=0.1", "mypy>=1.0"], "all" = ["torch>=2.0", "torchaudio>=2.0", "transformers>=4.30", "soundfile>=0.12"] }
 

@@ -183,7 +183,7 @@ class UploaderAgent:
         # Create trackable short links
         import re
         topic_slug = re.sub(r'[^a-z0-9]+', '-', idea_output.get("selected_topic", "video").lower()).strip('-')[:50]
-        from youtube_factory.shortio import ShortioManager
+        from pipeline.shortio_manager import ShortioManager
         shortio_key = os.environ.get("SHORTIO_API_KEY", "sk_tHnZp3W2JMePecTg")
         shortio = ShortioManager(shortio_key)
         
@@ -335,7 +335,7 @@ class UploaderAgent:
 
         # Auto-categorize into playlist
         try:
-            from youtube_factory.playlists import PlaylistManager
+            from pipeline.playlist_manager import PlaylistManager
             pm = PlaylistManager(self.config)
             pm.get_service(run_dir)
             topic = idea_output.get("selected_topic", "")
@@ -362,7 +362,8 @@ class UploaderAgent:
                         "run_dir": run_dir,
                         "idea_output": idea_output,
                         "visuals_output": visuals_output,
-                        "steps": {"UPLOAD": {"output": result}}
+                        "steps": {"UPLOAD": {"output": result}},
+                        "guide_output": inputs.get("guide_output")
                     })
                     result["short_url"] = short_result.get("video_url")
                     result["short_id"] = short_result.get("video_id")
@@ -424,6 +425,24 @@ class UploaderAgent:
         channel_handle = self.config.get("channel", {}).get("handle", "@WeightnSee")
         clean_handle   = channel_handle.replace("@", "")
 
+        # Get guide output and shorten the link if available
+        guide_output = inputs.get("guide_output", {})
+        guide_url = guide_output.get("guide_url") if guide_output else None
+        short_guide = None
+        if guide_url:
+            try:
+                from pipeline.shortio_manager import ShortioManager
+                import re
+                shortio_key = os.environ.get("SHORTIO_API_KEY", "sk_tHnZp3W2JMePecTg")
+                shortio = ShortioManager(shortio_key)
+                topic_slug = re.sub(r'[^a-zA-Z0-9]', '-', selected_topic).strip('-').lower()
+                topic_slug = topic_slug[:25]
+                utm_guide = f"{guide_url}?utm_source=youtube&utm_medium=shorts&utm_campaign={topic_slug}"
+                short_guide = shortio.create_short_link(utm_guide, f"sh-{topic_slug}") or utm_guide
+            except Exception as e:
+                print(f"[YouTube Uploader] Warning: Shortio link creation failed for Short: {e}")
+                short_guide = guide_url
+
         description_lines = []
         if concept_summary:
             # Use first 2 sentences of summary for mobile-length description
@@ -431,11 +450,19 @@ class UploaderAgent:
             description_lines.append(". ".join(sentences[:2]).strip() + ("." if not sentences[0].endswith(".") else ""))
             description_lines.append("")
 
-        # Link back to long-form video if available
+        # Link back to guide and long-form video if available
+        has_links = False
+        if short_guide:
+            description_lines.append(f"📖 Full Guide: {short_guide}")
+            has_links = True
+            
         long_form_steps = inputs.get("steps", {})
         long_video_id = (long_form_steps.get("UPLOAD", {}) or {}).get("output", {}).get("video_id")
         if long_video_id:
             description_lines.append(f"▶️ Full video: https://www.youtube.com/watch?v={long_video_id}")
+            has_links = True
+            
+        if has_links:
             description_lines.append("")
 
         description_lines.append(f"🔔 Subscribe: https://www.youtube.com/@{clean_handle}")

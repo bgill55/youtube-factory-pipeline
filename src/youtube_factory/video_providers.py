@@ -2,9 +2,9 @@ import os
 import json
 import time
 from datetime import datetime
-from youtube_factory.providers.base import VideoProvider
-from youtube_factory.providers.veo import VeoProvider
-from youtube_factory.providers.kling import KlingProvider
+from pipeline.providers.base import VideoProvider
+from pipeline.providers.veo import VeoProvider
+from pipeline.providers.kling import KlingProvider
 
 
 class VideoProviderManager:

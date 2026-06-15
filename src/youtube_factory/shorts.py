@@ -351,7 +351,7 @@ class ShortGenerator:
 
             # High-impact subtitles centered vertically for vertical format
             # Yellow text & outline. Alignment 2 (bottom center), MarginV 360 (safe zone)
-            subtitle_filter = f"subtitles={rel_srt_name}:force_style=FontName=Arial Black\\,FontSize=36\\,Bold=1\\,PrimaryColour=&H0000FFFF\\,OutlineColour=&H00000000\\,BorderStyle=1\\,Outline=3\\,Shadow=0\\,Alignment=2\\,MarginV=360"
+            subtitle_filter = f"subtitles={rel_srt_name}:force_style='FontName=Arial Black,FontSize=36,Bold=1,PrimaryColour=&H0000FFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=3,Shadow=0,Alignment=2,MarginV=360'"
 
             # Check if we should add topic overlay (first scene only)
             use_overlay = (idx == start_idx and topic_overlay_path and os.path.exists(topic_overlay_path))
@@ -408,7 +408,7 @@ class ShortGenerator:
                     f"scale=if(gt(a\\,{width}/{height})\\,{height}*dar\\,{width})"
                     f":if(gt(a\\,{width}/{height})\\,{height}\\,{width}/dar),"
                     f"setsar=1,"
-                    f"crop={width}:{height}:(in_w-{width})/2:max(((in_h-{height})/2)-t*4,0)"
+                    f"crop={width}:{height}:'(in_w-{width})/2':'max(((in_h-{height})/2)-t*4,0)'"
                 )
                 combined_filter = f"{image_scale_crop},{subtitle_filter}"
 

@@ -254,10 +254,10 @@ class GuideDeployer:
         generate_script = os.path.join(repo_dir, "generate_readme.py")
         pipeline_generate_script = os.path.join(os.path.dirname(__file__), "generate_readme.py")
         
-        # Copy generate_readme.py from pipeline if it doesn't exist in repo
-        if not os.path.exists(generate_script) and os.path.exists(pipeline_generate_script):
+        # Always copy/overwrite generate_readme.py from pipeline to keep it updated in repo
+        if os.path.exists(pipeline_generate_script):
             shutil.copy2(pipeline_generate_script, generate_script)
-            print(f"[Guide Deployer] Copied generate_readme.py to repo")
+            print(f"[Guide Deployer] Copied/updated generate_readme.py in repo")
         
         if not os.path.exists(generate_script):
             print(f"[Guide Deployer] generate_readme.py not found — skipping README update")

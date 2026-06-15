@@ -2,12 +2,15 @@ import os
 import json
 import re
 import random
-from youtube_factory.llm import query_llm as _query_llm
-from youtube_factory.prompts import get_system_prompt
+from pipeline.llm_utils import query_llm as _query_llm
+from pipeline.prompts import get_system_prompt
 
 def _safe_print(msg):
-    """Print that handles non-encodable characters on Windows cp1252 console."""
-    print(msg.encode("cp1252", errors="replace").decode("cp1252"))
+    """Print that handles non-encodable characters on Windows cp1252 console or detached stdout."""
+    try:
+        print(msg.encode("cp1252", errors="replace").decode("cp1252"))
+    except Exception:
+        pass
 
 class ScriptwriterAgent:
     ANALOGY_THEMES = [
@@ -53,11 +56,47 @@ class ScriptwriterAgent:
         idea_output = inputs.get("idea_output")
         scraped_content = inputs.get("scraped_content")
         run_dir = inputs.get("run_dir")
+        target_audience = inputs.get("target_audience", "General")
 
         selected_topic = idea_output.get("selected_topic")
         concept_summary = idea_output.get("concept_summary")
         keywords = idea_output.get("keywords", [])
         video_goal = idea_output.get("video_goal")
+
+        # Check for custom script in user_notes or topic_seed
+        user_notes = ""
+        if scraped_content and isinstance(scraped_content, dict):
+            user_notes = scraped_content.get("user_notes", "")
+            
+        topic_seed = ""
+        if run_dir and os.path.exists(os.path.join(run_dir, "run_state.json")):
+            try:
+                with open(os.path.join(run_dir, "run_state.json"), "r", encoding="utf-8") as f:
+                    state_data = json.load(f)
+                    topic_seed = state_data.get("topic_seed", "")
+            except Exception:
+                pass
+
+        script_markdown = ""
+        if "[Narrator]" in user_notes or "[Visual:" in user_notes:
+            script_markdown = user_notes
+        elif "[Narrator]" in topic_seed or "[Visual:" in topic_seed:
+            script_markdown = topic_seed
+
+        if script_markdown:
+            _safe_print("[Scriptwriter] Custom script detected — bypassing LLM script generation.")
+            safe_topic = re.sub(r'[^a-zA-Z0-9]', '_', selected_topic).strip('_').lower()
+            safe_topic = safe_topic[:30]
+            script_file_name = f"script_{safe_topic}.md"
+            script_file_path = os.path.join(run_dir, script_file_name)
+
+            with open(script_file_path, "w", encoding="utf-8") as f:
+                f.write(script_markdown)
+
+            return {
+                "script_file": script_file_path,
+                "script_text": script_markdown
+            }
 
         # Load channel identity from config
         channel = self.config.get("channel", {})
@@ -132,6 +171,7 @@ class ScriptwriterAgent:
             selected_topic=selected_topic,
             concept_summary=concept_summary,
             video_goal=video_goal,
+            target_audience=target_audience,
             keywords=", ".join(keywords),
             scraped_source_material=scraped_source_material,
             analogy_theme_instruction=analogy_theme_instruction

@@ -2,9 +2,9 @@ import os
 import json
 import re
 from datetime import datetime
-from youtube_factory.llm import query_llm as _query_llm
-from youtube_factory.prompts import get_system_prompt
-from youtube_factory.guide_deploy import GuideDeployer
+from pipeline.llm_utils import query_llm as _query_llm
+from pipeline.prompts import get_system_prompt
+from pipeline.guide_deployer import GuideDeployer
 
 
 class GuideGeneratorAgent:

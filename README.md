@@ -25,10 +25,12 @@ Each agent is **independently usable**, **provider-agnostic**, and **configured 
 
 | Agent | Purpose | Key Capability |
 |-------|---------|----------------|
-| `ResearchAgent` | GitHub/HF/arXiv/web analysis | Structured JSON briefs from any URL |
+| `ResearchAgent` | GitHub/HF/arXiv/web/YouTube/RSS/semantic search | Structured JSON briefs via Agent Reach (yt-dlp, Jina Reader, gh CLI, Exa MCP, feedparser) |
+| `VideoAnalysisAgent` | Screen recording analysis | FFmpeg scenes + Whisper + Tesseract OCR (8 classes) |
+| `ScriptBuilderAgent` | Asset-First script construction | Groups OCR segments → builds scenes with explicit timestamps |
 | `IdeaGeneratorAgent` | Video concept + SWOT | 3 concepts → 1 selected, niche diversity enforced |
 | `ScriptwriterAgent` | 3-act retention scripts | Hook → Breakdown → Deep Dive + CTA |
-| `VoiceoverAgent` | TTS via OmniVoice/Edge | Multi-speaker, word-level timestamps |
+| `VoiceoverAgent` | TTS via OmniVoice/Edge/Supertonic | Multi-speaker, word-level timestamps, CPU-only Supertonic M4 |
 | `VisualAssetAgent` | B-roll + AI images + thumbnails | Pexels / SD / Fal / Pollinations / local |
 | `AudioGenAgent` | BGM via Stable Audio 3 | Ducking, volume automation |
 | `VideoAssemblerAgent` | FFmpeg assembly | Subtitles, ducking, 4K output |
@@ -102,6 +104,12 @@ All agents read from a single `config.json` with environment variable interpolat
     "base_url": "http://localhost:3900/v1",
     "voice_id": "brian_ref"
   },
+  "supertonic": {
+    "base_url": "http://127.0.0.1:7788",
+    "voice_name": "M4",
+    "total_steps": 8,
+    "speed": 1.05
+  },
   "pexels_api_key": "${PEXELS_API_KEY}",
   "local_sd": {
     "base_url": "http://127.0.0.1:7860",
@@ -124,7 +132,19 @@ GEMINI_API_KEY=xxx
 
 ## Architecture
 
+### Standard Pipeline
 ```
+Research → SCRAPE → IDEA_GEN → SCRIPTWRITE → GUIDE_GEN → 
+VOICEOVER → VISUALS → AUDIO_GEN → ASSEMBLY → SHORTS → GUIDE_DEPLOY → UPLOAD
+```
+
+### Asset-First Pipeline (v0.3.0+)
+```
+VIDEO_ANALYSIS → SCRIPT_BUILD → GUIDE → VOICEOVER → 
+VISUALS → AUDIO_GEN → ASSEMBLY → SHORTS → GUIDE_DEPLOY → UPLOAD
+```
+
+```text
 ┌─────────────────────────────────────────────────────────────┐
 │                    PipelineOrchestrator                       │
 │  (state management, cancellation, threading, config reload)  │
@@ -164,20 +184,229 @@ GEMINI_API_KEY=xxx
 └─────────────┘    └─────────────┘    └─────────────┘
 ```
 
+### Asset-First Pipeline Flow
+```
+                    ┌─────────────────────────┐
+                    │    Upload Recording     │
+                    └───────────┬─────────────┘
+                                ▼
+                    ┌─────────────────────────┐
+                    │   VIDEO_ANALYSIS        │
+                    │  • FFmpeg scene detect  │
+                    │  • Whisper transcription│
+                    │  • Tesseract OCR (8cls) │
+                    └───────────┬─────────────┘
+                                ▼
+                    ┌─────────────────────────┐
+                    │   SCRIPT_BUILD          │
+                    │  • Group OCR segments   │
+                    │  • Build scenes w/      │
+                    │    explicit timestamps  │
+                    │  • LLM narration        │
+                    └───────────┬─────────────┘
+                                ▼
+              ┌─────────────────┼─────────────────┐
+              ▼                 ▼                 ▼
+       ┌─────────────┐ ┌─────────────┐ ┌─────────────┐
+       │  Voiceover  │ │  Visuals    │ │    Guide    │
+       │  (Supertonic)│ │ (Asset tags │ │  (LLM+HTML) │
+       │             │ │  + B-roll)  │ │             │
+       └──────┬──────┘ └──────┬──────┘ └──────┬──────┘
+              │               │               │
+              ▼               ▼               ▼
+       ┌─────────────┐ ┌─────────────┐ ┌─────────────┐
+       │ Audio Gen   │ │ Assembly    │ │ Guide       │
+       │ (Stable     │ │ (FFmpeg:    │ │ Deploy      │
+       │  Audio 3)   │ │  44.1kHz/   │ │ (GitHub)    │
+       │             │ │  192k)      │ │             │
+       └──────┬──────┘ └──────┬──────┘ └──────┬──────┘
+              │               │               │
+              ▼               ▼               ▼
+       ┌─────────────┐ ┌─────────────┐ ┌─────────────┐
+       │   Shorts    │ │  Upload     │ │ Community   │
+       │  (Scene     │ │ (YouTube)   │ │  Posts      │
+       │  select)    │ │             │ │             │
+       └─────────────┘ └─────────────┘ └─────────────┘
+```
+
 **All LLM calls route through FreeLLMAPI** → automatic provider failover, penalty tracking, system prompt injection.
 
 ---
 
-## Provider Abstraction
+## Agent Reach Integration (v0.2.0+)
 
-| Capability | Providers | Fallback Chain |
-|------------|-----------|----------------|
-| **LLM** | Gemini, Cerebras, Groq, Z.ai, LM Studio | FreeLLMAPI router |
-| **TTS** | OmniVoice, Edge TTS | VoiceoverAgent |
-| **Images** | SD WebUI, Pollinations, Gemini, Fal | VisualAssetAgent |
-| **Video** | Fal (Hunyuan), Kling, Veo, Pexels | VideoProviderManager |
-| **BGM** | Stable Audio 3 | AudioGenAgent |
-| **Stock** | Pexels | VisualAssetAgent |
+The `ResearchAgent` now leverages **Agent Reach** — a capability layer giving agents unified, zero-API-cost access to internet sources:
+
+| Source | Tool | Method |
+|--------|------|--------|
+| **YouTube** | `yt-dlp` | Transcript + metadata extraction |
+| **Web Articles** | Jina Reader (`curl r.jina.ai/URL`) | Clean article extraction |
+| **GitHub** | `gh CLI` | Repo metadata + README |
+| **Semantic Search** | `mcporter` + Exa MCP | Neural web search |
+| **RSS/Atom** | `feedparser` | Feed parsing |
+
+**No API keys required** for any of the above. The tools are installed as system dependencies (see Installation).
+
+### External Dependencies (install once)
+
+```bash
+# Windows (via winget/choco)
+winget install GitHub.cli
+npm install -g mcporter
+mcporter config add exa https://mcp.exa.ai/mcp
+
+# Python deps installed automatically with package
+# yt-dlp, feedparser, agent-reach
+```
+
+### Research Agent Capabilities
+
+```python
+from youtube_factory.agents.research import ResearchAgent
+
+agent = ResearchAgent(config)
+
+# YouTube transcript
+result = agent.run({"topic_seed": "https://youtube.com/watch?v=...", "run_dir": "/tmp/run"})
+
+# GitHub repo deep-dive
+result = agent.run({"topic_seed": "https://github.com/owner/repo", "run_dir": "/tmp/run"})
+
+# Web article (Jina Reader)
+result = agent.run({"topic_seed": "https://anthropic.com/news/...", "run_dir": "/tmp/run"})
+
+# Semantic search (Exa)
+# (Triggered automatically for generic queries in future versions)
+```
+
+The agent auto-detects the source type from the URL and routes to the appropriate backend.
+
+---
+
+## Asset-First Mode (v0.3.0+)
+
+**Build videos around your screen recordings** — instead of inserting recordings into pre-existing scripts, the pipeline **analyzes your recording first** and builds the entire video around it.
+
+### How It Works
+
+```
+Upload Screen Recording → VIDEO_ANALYSIS → SCRIPT_BUILD → VOICEOVER → VISUALS → AUDIO_GEN → ASSEMBLY → SHORTS → UPLOAD
+```
+
+| Stage | Purpose |
+|-------|---------|
+| `VideoAnalysisAgent` | FFmpeg scene detection + Whisper transcription + Tesseract OCR classification |
+| `ScriptBuilderAgent` | Groups segments → builds scenes with explicit asset timestamps |
+| `VoiceoverAgent` | Supertonic TTS with expression tags |
+| `VisualAssetAgent` | Explicit asset tags + B-roll fallback |
+
+### OCR Classification
+
+The `VideoAnalysisAgent` classifies each frame segment:
+- `terminal` — Command line / shell
+- `code` — IDE / editor  
+- `browser` — Web pages
+- `ide` — Development environment
+- `ui` — Application interfaces
+- `demo` — Live demonstrations
+- `explanation` — Talking head / explanations
+- `visual` — Pure visual content
+- `talking` — General speech
+
+### Explicit Asset Tags
+
+Write tags directly in visual descriptions for precise placement:
+
+```markdown
+[Visual: asset:video:assets/recording.mp4 timestamp=0-30]
+[Visual: asset:video:assets/recording.mp4 timestamp=30-60]
+[Visual: asset:image:assets/screenshot.png]
+[Visual: asset:screenshot:https://github.com/user/repo]
+```
+
+### Usage
+
+```python
+from youtube_factory.orchestrator import PipelineOrchestrator
+from youtube_factory.config import load_config
+
+config = load_config("config.json")
+orchestrator = PipelineOrchestrator(workspace_dir="~/youtube_factory")
+
+# Asset-First run: pass asset info in initial creation
+run_id, state = orchestrator.create_new_run(
+    topic_seed="YouTube Factory 1.0 Demo",
+    target_audience="Tech creators",
+    competitor_analysis="Pictory, Runway",
+    asset_first=True,
+    asset_video="recording.mp4",
+    asset_video_path="~/youtube_factory/workspace/runs/run_xxx/assets/recording.mp4"
+)
+
+orchestrator.execute(run_id)
+```
+
+Or via CLI:
+```bash
+python -m youtube_factory.run_factory \
+  --seed "Your topic" \
+  --asset-first \
+  --asset-video ./recording.mp4
+```
+
+### Key Benefits
+
+- **Full duration preserved** — Your 10-min walkthrough stays 10 mins (not truncated)
+- **Contextual narration** — OCR reads your terminal/code/browser → generates matching narration
+- **Precise timing** — Explicit timestamps keep everything in sync
+- **Same pipeline** — Reuses all existing agents (TTS, visuals, assembly, etc.)
+
+---
+
+## VoiceoverAgent Capabilities (v0.2.0+)
+
+The `VoiceoverAgent` now supports **Supertonic TTS** — a lightning-fast, on-device, multilingual TTS system running via ONNX Runtime with zero VRAM usage:
+
+| Provider | Model | Hardware | Quality |
+|----------|-------|----------|---------|
+| **Supertonic (M4)** | 99M params, ONNX Runtime | **CPU only** | 44.1kHz studio quality |
+| OmniVoice | Various | GPU | High |
+| Edge TTS | Microsoft Neural | CPU | Good |
+
+### Configuration
+
+```json
+{
+  "voice_provider": "supertonic_http",
+  "supertonic": {
+    "base_url": "http://127.0.0.1:7788",
+    "voice_name": "M4",
+    "total_steps": 8,
+    "speed": 1.05
+  }
+}
+```
+
+### External Dependency (install once)
+
+```bash
+pip install 'supertonic[serve]'
+supertonic serve --host 127.0.0.1 --port 7788
+```
+
+### Usage
+
+```python
+from youtube_factory.agents.voice import VoiceoverAgent
+
+agent = VoiceoverAgent(config)
+result = agent.run({
+    "script_output": {"script_file": "...", "script_text": "..."},
+    "run_dir": "/tmp/run"
+})
+```
+
+The agent auto-detects `voice_provider: "supertonic_http"` and routes to the local Supertonic server (OpenAI-compatible `/v1/audio/speech` endpoint).
 
 ---
 

@@ -67,7 +67,7 @@ class PipelineOrchestrator:
         state = {
             "run_id": run_id,
             "run_dir": run_dir,
-            "current_step": STAGE_IDEA,
+            "current_step": STAGE_RESEARCH,
             "topic_seed": topic_seed,
             "target_audience": target_audience,
             "competitor_analysis": competitor_analysis,
@@ -248,6 +248,28 @@ class PipelineOrchestrator:
             STAGE_UPLOAD: UploaderAgent(self.config)
         }
 
+        state = self.load_state(run_dir)
+
+        # If topic_seed is blank, check for pre-scraped content in workspace
+        # This allows using scraped content directly without RESEARCH/SCRAPE stages
+        topic_seed = (state.get("topic_seed", "") or "").strip()
+        if not topic_seed or topic_seed.lower() == "[scraped]":
+            scraped_path = os.path.join(self.workspace_dir, "workspace", "scraped_content.json")
+            if os.path.exists(scraped_path):
+                self.log_to_run(run_dir, f"Blank topic_seed — loading pre-scraped content from {scraped_path}")
+                try:
+                    with open(scraped_path, "r", encoding="utf-8") as f:
+                        scraped_data = json.load(f)
+                    # Inject scraped content into state so IDEA_GEN can use it
+                    state["steps"][STAGE_SCRAPE] = {"status": "SUCCESS", "output": scraped_data, "updated_at": datetime.datetime.now().isoformat()}
+                    state["steps"][STAGE_RESEARCH] = {"status": "SUCCESS", "output": {"skipped": True, "reason": "Using pre-scraped content"}, "updated_at": datetime.datetime.now().isoformat()}
+                    # Update current step to IDEA_GEN AND mark seed as [scraped] for IDEA_GEN agent
+                    state["current_step"] = STAGE_IDEA
+                    state["topic_seed"] = "[scraped]"
+                    self.save_state(run_dir, state)
+                except Exception as e:
+                    self.log_to_run(run_dir, f"Failed to load scraped content: {e}")
+
         try:
             while True:
                 # Check if run was cancelled
@@ -305,6 +327,7 @@ class PipelineOrchestrator:
                         elif current_stage == STAGE_SCRIPT:
                             inputs = {
                                 "idea_output": state["steps"][STAGE_IDEA]["output"],
+                                "target_audience": state.get("target_audience", ""),
                                 "scraped_content": state["steps"][STAGE_SCRAPE]["output"] if state["steps"].get(STAGE_SCRAPE) and state["steps"][STAGE_SCRAPE].get("output") else None,
                                 "run_dir": run_dir
                             }
