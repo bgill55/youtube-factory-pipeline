@@ -1,10 +1,13 @@
+from youtube_factory.logging_utils import get_logger
+
+log = get_logger("agent_community")
 import os
 import json
 from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
-from pipeline.llm_utils import query_llm as _query_llm
+from youtube_factory.llm import query_llm as _query_llm
 
 
 class CommunityPostAgent:
@@ -34,7 +37,7 @@ class CommunityPostAgent:
         with open(posts_path, "w", encoding="utf-8") as f:
             json.dump(posts, f, indent=2)
         
-        print(f"[Community Post] Generated {len(posts)} post variations")
+        log.info(f"[Community Post] Generated {len(posts)} post variations")
         
         # If action is "post", publish the selected one
         published_url = None
@@ -114,7 +117,7 @@ OUTPUT: Just the post text. No quotes, no explanation."""
             res = _query_llm(self.config, system_prompt, "Generate the teaser post.", task="script")
             return res.strip()
         except Exception as e:
-            print(f"[Community Post] Teaser generation failed: {e}")
+            log.info(f"[Community Post] Teaser generation failed: {e}")
             return f"Something big is coming to the channel... 🤫\n\nCan you guess what we're covering next?\n\nDrop your guesses below! 👇"
 
     def _generate_thumbnail_poll(self, topic, variants):
@@ -157,7 +160,7 @@ OUTPUT: Just the question text. No quotes, no explanation."""
             res = _query_llm(self.config, system_prompt, "Generate the question post.", task="script")
             return res.strip()
         except Exception as e:
-            print(f"[Community Post] Question generation failed: {e}")
+            log.info(f"[Community Post] Question generation failed: {e}")
             return f"Quick question for the community:\n\nWhat's your biggest struggle with {keywords[0] if keywords else 'AI'} right now?\n\nDrop a comment below - might cover it in the next video! 💬"
 
     def _generate_summary_post(self, topic, summary, keywords):
@@ -183,7 +186,7 @@ OUTPUT: Just the post text. No quotes, no explanation."""
             res = _query_llm(self.config, system_prompt, "Generate the summary post.", task="script")
             return res.strip()
         except Exception as e:
-            print(f"[Community Post] Summary generation failed: {e}")
+            log.info(f"[Community Post] Summary generation failed: {e}")
             return f"New video just dropped! 🎬\n\nWe covered:\n• {keywords[0] if keywords else 'Key concept'}\n• {keywords[1] if len(keywords) > 1 else 'Practical setup'}\n• {keywords[2] if len(keywords) > 2 else 'Pro tips'}\n\n📖 Full written guide with code and links in the description!\n\nWhat should we cover next? 👇"
 
     def _get_credentials(self, run_dir):
@@ -211,7 +214,7 @@ OUTPUT: Just the post text. No quotes, no explanation."""
         
         if not creds or not creds.valid:
             if not os.path.exists(client_secrets_path):
-                print("[Community Post] No client_secrets.json found. Cannot publish.")
+                log.info("[Community Post] No client_secrets.json found. Cannot publish.")
                 return None
             try:
                 flow = InstalledAppFlow.from_client_secrets_file(client_secrets_path, self.scopes)
@@ -219,12 +222,13 @@ OUTPUT: Just the post text. No quotes, no explanation."""
                 with open(token_path, "w") as f:
                     f.write(creds.to_json())
             except Exception as e:
-                print(f"[Community Post] OAuth failed: {e}")
+                log.info(f"[Community Post] OAuth failed: {e}")
                 return None
         
         return creds
 
     def _publish_post(self, post, run_dir):
         """Publishing not supported via YouTube Data API v3 — communityPosts endpoint is private."""
-        print("[Community Post] Publishing via API is not supported. Use YouTube Studio to post manually.")
+        log.info("[Community Post] Publishing via API is not supported. Use YouTube Studio to post manually.")
         return None
+

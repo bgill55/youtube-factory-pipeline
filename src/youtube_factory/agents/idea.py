@@ -1,19 +1,12 @@
+from youtube_factory.logging_utils import get_logger
+
+log = get_logger("agent_idea")
 import os
-import sys
 import json
 import datetime
-from pipeline.llm_utils import query_llm as _query_llm
-from pipeline.prompts import get_system_prompt
-from pipeline.seo_utils import optimize_titles, generate_hashtags, research_competition
-
-
-def _safe_print(*args, **kwargs):
-    try:
-        text = " ".join(str(a) for a in args)
-        enc = sys.stdout.encoding or "utf-8"
-        print(text.encode(enc, errors="replace").decode(enc, errors="replace"), **kwargs)
-    except Exception:
-        pass
+from youtube_factory.llm import query_llm as _query_llm
+from youtube_factory.prompts import get_system_prompt
+from youtube_factory.seo import optimize_titles, generate_hashtags, research_competition
 
 
 def _normalize_text(text):
@@ -114,7 +107,7 @@ class IdeaGeneratorAgent:
         )
         
         if has_custom_script:
-            _safe_print("[IdeaGenerator] Custom script detected in inputs — bypassing LLM idea generation.")
+            log.info("[IdeaGenerator] Custom script detected in inputs — bypassing LLM idea generation.")
             script_text = topic_seed if ("[Narrator]" in topic_seed or "[Visual:" in topic_seed) else user_notes
             
             # Query LLM to generate professional metadata (description, keywords, tags, etc.) based on the user's custom script
@@ -140,7 +133,7 @@ Generate the following in JSON format:
   "tags": ["10-15 lowercase tags/hashtags for YouTube SEO"]
 }}
 """
-                _safe_print("[IdeaGenerator] Querying LLM to generate SEO description and tags for custom script...")
+                log.info("[IdeaGenerator] Querying LLM to generate SEO description and tags for custom script...")
                 meta_json = self.query_llm("You are a professional YouTube SEO specialist. Output JSON only.", metadata_prompt)
                 
                 # Clean up JSON if LLM returned markdown code blocks
@@ -157,7 +150,7 @@ Generate the following in JSON format:
                 keywords = meta_data.get("keywords", keywords)
                 tags = meta_data.get("tags", tags)
             except Exception as e:
-                _safe_print(f"[IdeaGenerator] Failed to generate SEO metadata from LLM: {e}. Using generic fallbacks.")
+                log.info(f"[IdeaGenerator] Failed to generate SEO metadata from LLM: {e}. Using generic fallbacks.")
 
             title = "Custom Script Video"
             if topic_seed and not ("[Narrator]" in topic_seed or "[Visual:" in topic_seed) and topic_seed.lower() != "[scraped]":
@@ -199,13 +192,13 @@ Generate the following in JSON format:
             if run_dir and os.path.isdir(run_dir):
                 concept_path = os.path.join(run_dir, "selected_concept.json")
                 if os.path.exists(concept_path):
-                    _safe_print(f"[IdeaGenerator] Reusing prior concept from {concept_path}")
+                    log.info(f"[IdeaGenerator] Reusing prior concept from {concept_path}")
                     try:
                         with open(concept_path, "r", encoding="utf-8") as f:
                             selected_concept = json.load(f)
                         return selected_concept
                     except Exception as e:
-                        _safe_print(f"[IdeaGenerator] Failed to load prior concept: {e}")
+                        log.info(f"[IdeaGenerator] Failed to load prior concept: {e}")
 
         # If seed is [scraped], derive topic from scraped content
         is_scraped_mode = topic_seed.strip().lower() == "[scraped]"
@@ -217,7 +210,7 @@ Generate the following in JSON format:
             
             # Check if scraped content is too thin (likely a JS SPA)
             if total_words < 500:
-                _safe_print(f"[Idea Generator] Scraped content is thin ({total_words} words from {base_url})")
+                log.info(f"[Idea Generator] Scraped content is thin ({total_words} words from {base_url})")
                 
                 # Deterministic topic extraction from user_notes when pages are empty
                 user_notes_lower = user_notes.lower()
@@ -226,10 +219,10 @@ Generate the following in JSON format:
                 # Detect specific known sources and force on-topic concepts
                 if "anthropic" in user_notes_lower and ("fable 5" in user_notes_lower or "mythos 5" in user_notes_lower or "government directive" in user_notes_lower):
                     forced_topic = "The Great Anthropic Recall: The US Government's Export Control Directive Against Fable 5 and Mythos 5"
-                    _safe_print(f"[Idea Generator] Detected Anthropic government directive source — forcing on-topic concept")
+                    log.info(f"[Idea Generator] Detected Anthropic government directive source — forcing on-topic concept")
                 elif "youtube-factory" in user_notes_lower or "pipelineorchestrator" in user_notes_lower or "weight and see" in user_notes_lower:
                     forced_topic = "YouTube Factory Pipeline: A Self-Recursing Open-Source Video Production System"
-                    _safe_print(f"[Idea Generator] Detected YouTube Factory source — forcing recursive meta concept")
+                    log.info(f"[Idea Generator] Detected YouTube Factory source — forcing recursive meta concept")
                 
                 if forced_topic:
                     topic_seed = forced_topic
@@ -261,7 +254,7 @@ Generate the following in JSON format:
                         topic_seed += f" — {phrase_str}"
                     if heading_str:
                         topic_seed += f" — features: {heading_str}"
-                    _safe_print(f"[Idea Generator] Derived topic seed: {topic_seed[:150]}...")
+                    log.info(f"[Idea Generator] Derived topic seed: {topic_seed[:150]}...")
             else:
                 titles = [p.get("title", "") for p in pages if p.get("title")]
                 topic_seed = f"Create a video about: {', '.join(titles[:3])} (from {base_url})"
@@ -281,7 +274,7 @@ Generate the following in JSON format:
         past_topics_context = ""
         is_scraped_mode = topic_seed.strip().lower() == "[scraped]"
         if not is_scraped_mode and topic_seed.lower().strip() in ["trending", "latest trends", "trends", "[trends]"]:
-            _safe_print("[Idea Generator] 'trending' seed detected! Fetching real-time tech trends from Hugging Face, GitHub, Hacker News, and ShowHN...")
+            log.info("[Idea Generator] 'trending' seed detected! Fetching real-time tech trends from Hugging Face, GitHub, Hacker News, and ShowHN...")
             try:
                 import requests
                 from datetime import timedelta, timezone
@@ -318,7 +311,7 @@ Generate the following in JSON format:
                                 "source": "huggingface"
                             })
                 except Exception as e:
-                    _safe_print(f"[Idea Generator] HF fetch error: {e}")
+                    log.info(f"[Idea Generator] HF fetch error: {e}")
 
                 # Fetch GitHub — recent repos across AI topics (last 7 days)
                 try:
@@ -356,7 +349,7 @@ Generate the following in JSON format:
                         except Exception:
                             pass
                 except Exception as e:
-                    _safe_print(f"[Idea Generator] GitHub fetch error: {e}")
+                    log.info(f"[Idea Generator] GitHub fetch error: {e}")
 
                 # Fetch HackerNews — broader AI keyword filter
                 try:
@@ -390,7 +383,7 @@ Generate the following in JSON format:
                                 if result:
                                     trending_items.append(result)
                 except Exception as e:
-                    _safe_print(f"[Idea Generator] HackerNews fetch error: {e}")
+                    log.info(f"[Idea Generator] HackerNews fetch error: {e}")
 
                 # Fetch ShowHN — developer announcements (new tools, models, launches)
                 try:
@@ -423,7 +416,7 @@ Generate the following in JSON format:
                                 if result:
                                     trending_items.append(result)
                 except Exception as e:
-                    _safe_print(f"[Idea Generator] ShowHN fetch error: {e}")
+                    log.info(f"[Idea Generator] ShowHN fetch error: {e}")
 
                 # Sort by recency — most recent first (newsgacking priority)
                 trending_items.sort(key=lambda x: x.get("hours_age", 999))
@@ -445,7 +438,7 @@ Generate the following in JSON format:
                         labeled_items.append(f"{label} {item['text']}")
                     trends_context = "\n- Live Real-time Tech Trends (fetched moments ago):\n" + "\n".join(labeled_items)
             except Exception as ex:
-                _safe_print(f"[Idea Generator] Failed to fetch real-time trends: {ex}")
+                log.info(f"[Idea Generator] Failed to fetch real-time trends: {ex}")
 
         # 3b. Load past topics to avoid repetition
         try:
@@ -463,7 +456,7 @@ Generate the following in JSON format:
                 if past_titles:
                     past_topics_context = "\n- PREVIOUS VIDEO TOPICS (DO NOT REPEAT THESE):\n" + "\n".join(f"  - {t}" for t in past_titles)
         except Exception as e:
-            _safe_print(f"[Idea Generator] Failed to load past topics: {e}")
+            log.info(f"[Idea Generator] Failed to load past topics: {e}")
 
         # Format scraped content if available
         scraped_context = ""
@@ -624,8 +617,8 @@ Generate the following in JSON format:
             topic_lower = title.lower()
             has_real_tool = any(tool in topic_lower for tool in real_tools if len(tool) > 3)
             if not has_real_tool and real_tools:
-                _safe_print(f"[Idea Generator] WARNING: Selected topic may contain hallucinated tool name: '{title}'")
-                _safe_print(f"[Idea Generator] Real tools from trending data: {list(real_tools)[:5]}")
+                log.info(f"[Idea Generator] WARNING: Selected topic may contain hallucinated tool name: '{title}'")
+                log.info(f"[Idea Generator] Real tools from trending data: {list(real_tools)[:5]}")
 
         # Validate featured_links — remove any URLs that return 404 or are unreachable
         featured_links = output_data.get("featured_links", [])
@@ -641,9 +634,9 @@ Generate the following in JSON format:
                     if resp.status_code < 400:
                         valid_links.append(link)
                     else:
-                        _safe_print(f"[Idea Generator] Removing dead link ({resp.status_code}): {url}")
+                        log.info(f"[Idea Generator] Removing dead link ({resp.status_code}): {url}")
                 except Exception:
-                    _safe_print(f"[Idea Generator] Removing unreachable link: {url}")
+                    log.info(f"[Idea Generator] Removing unreachable link: {url}")
             output_data["featured_links"] = valid_links
 
         # Flag banned/outdated model names
@@ -652,7 +645,7 @@ Generate the following in JSON format:
         concept = output_data.get("concept_summary", "").lower()
         for banned in banned_models:
             if banned in selected or banned in concept:
-                _safe_print(f"[Idea Generator] WARNING: Topic contains outdated model '{banned}' — prompt should have caught this")
+                log.info(f"[Idea Generator] WARNING: Topic contains outdated model '{banned}' — prompt should have caught this")
 
         # SEO Optimization Pass
         try:
@@ -660,7 +653,7 @@ Generate the following in JSON format:
             keywords = output_data.get("keywords", [])
             
             # Research competition for the topic
-            _safe_print(f"[Idea Generator] Running SEO research for: {selected_topic}")
+            log.info(f"[Idea Generator] Running SEO research for: {selected_topic}")
             competition_data = research_competition(selected_topic)
             output_data["seo_research"] = competition_data
             
@@ -683,13 +676,13 @@ Generate the following in JSON format:
                 if scored_titles and scored_titles[0]["score"] > 70:
                     best_title = scored_titles[0]["title"]
                     if best_title != output_data.get("selected_topic"):
-                        _safe_print(f"[Idea Generator] SEO optimized title: '{best_title}' (score: {scored_titles[0]['score']})")
+                        log.info(f"[Idea Generator] SEO optimized title: '{best_title}' (score: {scored_titles[0]['score']})")
                         output_data["selected_topic_original"] = output_data["selected_topic"]
                         output_data["selected_topic"] = best_title
             
-            _safe_print(f"[Idea Generator] SEO hashtags: {hashtags}")
+            log.info(f"[Idea Generator] SEO hashtags: {hashtags}")
         except Exception as e:
-            _safe_print(f"[Idea Generator] SEO optimization failed (non-fatal): {e}")
+            log.info(f"[Idea Generator] SEO optimization failed (non-fatal): {e}")
 
         # Save concept details to run directory
         concept_path = os.path.join(run_dir, "selected_concept.json")
@@ -697,4 +690,5 @@ Generate the following in JSON format:
             json.dump(output_data, f, indent=2)
 
         return output_data
+
 

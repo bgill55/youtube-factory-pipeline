@@ -1,3 +1,6 @@
+from youtube_factory.logging_utils import get_logger
+
+log = get_logger("short_generator")
 import os
 import json
 import re
@@ -67,10 +70,10 @@ class ShortGenerator:
 
             overlay_path = os.path.join(output_dir, "topic_overlay.png")
             img.save(overlay_path, "PNG")
-            print(f"[Short Generator] Topic overlay rendered: '{text}'")
+            log.info(f"[Short Generator] Topic overlay rendered: '{text}'")
             return overlay_path
         except Exception as e:
-            print(f"[Short Generator] Topic overlay render failed: {e}")
+            log.info(f"[Short Generator] Topic overlay render failed: {e}")
             return None
 
     def write_scene_srt_timed(self, word_srt_path, srt_out_path):
@@ -108,7 +111,7 @@ class ShortGenerator:
                 end = parse_srt_time(end_str)
                 words.append({"word": word, "start": start, "end": end})
             except Exception as e:
-                print(f"[Short Generator] Error parsing block {idx}: {e}")
+                log.info(f"[Short Generator] Error parsing block {idx}: {e}")
 
         if not words:
             shutil.copy(word_srt_path, srt_out_path)
@@ -242,7 +245,7 @@ class ShortGenerator:
                     return start_idx, end_idx, reason
 
         except Exception as e:
-            print(f"[Short Generator] LLM scene selection failed: {e}. Falling back to greedy range.")
+            log.info(f"[Short Generator] LLM scene selection failed: {e}. Falling back to greedy range.")
 
         # Fallback
         s, e, d = self.fallback_scene_range(scenes)
@@ -250,7 +253,7 @@ class ShortGenerator:
 
     def generate(self, run_dir, orchestrator=None):
         """Assembles the short, returns the result dict."""
-        print(f"[Short Generator] Initializing Short generation in: {run_dir}")
+        log.info(f"[Short Generator] Initializing Short generation in: {run_dir}")
         state_path = os.path.join(run_dir, "run_state.json")
         if not os.path.exists(state_path):
             raise FileNotFoundError(f"Run state file not found: {state_path}")
@@ -280,7 +283,7 @@ class ShortGenerator:
         total_duration = sum([scenes_voice[i]["duration"] for i in range(start_idx, end_idx + 1)])
         # Safe encoding print to prevent Windows terminal character crashes
         safe_reason = reason.encode('ascii', errors='replace').decode('ascii')
-        print(f"[Short Generator] Selected scenes {start_idx} to {end_idx} ({total_duration:.2f}s). Reason: {safe_reason}")
+        log.info(f"[Short Generator] Selected scenes {start_idx} to {end_idx} ({total_duration:.2f}s). Reason: {safe_reason}")
 
         # Setup temp short directory
         short_temp_dir = os.path.join(run_dir, "video_temp_short")
@@ -297,7 +300,9 @@ class ShortGenerator:
 
         # Generate topic overlay PNG using PIL (clean text like thumbnails)
         topic_overlay_path = None
-        idea_output = state.get("steps", {}).get("IDEA_GEN", {}).get("output", {})
+        idea_output = state.get("steps", {}).get("IDEA_GEN", {}).get("output") or {}
+        if not isinstance(idea_output, dict):
+            idea_output = {}
         raw_topic = idea_output.get("selected_topic") or state.get("topic_seed", "")
         topic_label = raw_topic
         if raw_topic:
@@ -312,7 +317,7 @@ class ShortGenerator:
                 if not topic_label or len(topic_label) > 40:
                     topic_label = raw_topic[:35]
             except Exception as e:
-                print(f"[Short Generator] LLM topic label failed: {e}, using truncated topic")
+                log.info(f"[Short Generator] LLM topic label failed: {e}, using truncated topic")
                 topic_label = raw_topic[:35]
 
             topic_overlay_path = self._render_topic_overlay(topic_label, width, height, short_temp_dir)
@@ -357,12 +362,22 @@ class ShortGenerator:
             use_overlay = (idx == start_idx and topic_overlay_path and os.path.exists(topic_overlay_path))
 
             if is_video:
-                # Scale to COVER 1080x1920 (object-fit: cover), then center crop.
+                # Scale to COVER 1080x1920 (object-fit: cover), then crop with configurable anchor.
+                # shorts_crop_anchor: "center" (default), "top" (for screen recordings), "bottom"
+                crop_anchor = self.config.get("shorts_crop_anchor", "top")
+                if crop_anchor == "top":
+                    crop_y = "0"
+                elif crop_anchor == "bottom":
+                    crop_y = f"(in_h-{height})"
+                else:
+                    crop_y = f"(in_h-{height})/2"
+                
+                # Quote scale expressions to protect commas from filtergraph parser
                 video_scale_crop = (
-                    f"scale=if(gt(a\\,{width}/{height})\\,{height}*dar\\,{width})"
-                    f":if(gt(a\\,{width}/{height})\\,{height}\\,{width}/dar),"
+                    f"scale='if(gt(a\\,{width}/{height})\\,{height}*dar\\,{width})'"
+                    f":'if(gt(a\\,{width}/{height})\\,{height}\\,{width}/dar)',"
                     f"setsar=1,"
-                    f"crop={width}:{height}:(in_w-{width})/2:(in_h-{height})/2"
+                    f"crop={width}:{height}:(in_w-{width})/2:{crop_y}"
                 )
                 combined_filter = f"{video_scale_crop},{subtitle_filter}"
 
@@ -404,11 +419,28 @@ class ShortGenerator:
                     ]
             else:
                 # Still image → portrait fill with slow upward Ken Burns pan.
+                # Use crop anchor for consistent framing.
+                crop_anchor = self.config.get("shorts_crop_anchor", "top")
+                enable_ken_burns = self.config.get("shorts_ken_burns", False)
+                
+                if crop_anchor == "top":
+                    base_y = "0"
+                elif crop_anchor == "bottom":
+                    base_y = f"(in_h-{height})"
+                else:
+                    base_y = f"(in_h-{height})/2"
+                
+                # Add subtle Ken Burns pan if enabled
+                if enable_ken_burns:
+                    crop_y = f"max({base_y}-t*4,0)"
+                else:
+                    crop_y = base_y
+                
                 image_scale_crop = (
-                    f"scale=if(gt(a\\,{width}/{height})\\,{height}*dar\\,{width})"
-                    f":if(gt(a\\,{width}/{height})\\,{height}\\,{width}/dar),"
+                    f"scale='if(gt(a\\,{width}/{height})\\,{height}*dar\\,{width})'"
+                    f":'if(gt(a\\,{width}/{height})\\,{height}\\,{width}/dar)',"
                     f"setsar=1,"
-                    f"crop={width}:{height}:'(in_w-{width})/2':'max(((in_h-{height})/2)-t*4,0)'"
+                    f"crop={width}:{height}:(in_w-{width})/2:{crop_y}"
                 )
                 combined_filter = f"{image_scale_crop},{subtitle_filter}"
 
@@ -445,10 +477,25 @@ class ShortGenerator:
                         rel_mp4_name
                     ]
 
-            subprocess.run(cmd, cwd=short_temp_dir, capture_output=True, text=True, check=True)
+            # Windows fix: retry on file locking, ensure handles closed
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    result = subprocess.run(cmd, cwd=short_temp_dir, capture_output=True, text=True, check=True, timeout=120)
+                    break
+                except subprocess.CalledProcessError as e:
+                    if attempt == max_retries - 1:
+                        raise
+                    log.info(f"[Short Generator] FFmpeg attempt {attempt+1} failed, retrying: {e.stderr[:200]}")
+                    time.sleep(1)
+                except PermissionError as e:
+                    if attempt == max_retries - 1:
+                        raise
+                    log.info(f"[Short Generator] File locked, retrying in 1s... ({e})")
+                    time.sleep(1)
             scene_mp4_files.append(rel_mp4_name)
 
-        # Concat
+        # Concat - Windows fix with retry
         concat_list_path = os.path.join(short_temp_dir, "concat_list.txt")
         with open(concat_list_path, "w", encoding="utf-8") as f:
             for f_name in scene_mp4_files:
@@ -466,14 +513,23 @@ class ShortGenerator:
             "-c", "copy",
             f"../{temp_short_unmixed_name}"
         ]
-        subprocess.run(concat_cmd, cwd=short_temp_dir, capture_output=True, text=True, check=True)
+        # Windows fix: retry concat on file locking
+        for attempt in range(3):
+            try:
+                subprocess.run(concat_cmd, cwd=short_temp_dir, capture_output=True, text=True, check=True)
+                break
+            except subprocess.CalledProcessError as e:
+                if attempt == 2:
+                    raise
+                log.info(f"[Short Generator] Concat attempt {attempt+1} failed, retrying: {e.stderr[:200]}")
+                time.sleep(1)
 
         # Mix bgm
         bg_music_file = state["steps"].get("AUDIO_GEN", {}).get("output", {}).get("bg_music_file")
         audio_settings = self.config.get("audio_settings", {})
 
         if bg_music_file and os.path.exists(bg_music_file):
-            print(f"[Short Generator] Mixing BGM for Short...")
+            log.info(f"[Short Generator] Mixing BGM for Short...")
             # For shorts, mix BGM volume slightly louder (e.g. +33% increase over horizontal)
             bg_vol = audio_settings.get("bg_music_volume", 0.15) * 1.33
             thresh = audio_settings.get("ducking_threshold", 0.10)
@@ -485,7 +541,8 @@ class ShortGenerator:
                 f"[1:a]volume={bg_vol}[bg_music];"
                 f"[0:a]asplit=2[sc][voice];"
                 f"[bg_music][sc]sidechaincompress=threshold={thresh}:ratio={ratio}:attack={attack}:release={release}[ducked_bg];"
-                f"[voice][ducked_bg]amix=inputs=2:duration=first[mixed_audio]"
+                f"[voice][ducked_bg]amix=inputs=2:duration=first[mixed];"
+                f"[mixed]loudnorm=I=-16:LRA=11:TP=-1.5[final_audio]"
             )
 
             mix_cmd = [
@@ -495,21 +552,37 @@ class ShortGenerator:
                 "-i", bg_music_file,
                 "-filter_complex", filter_complex,
                 "-map", "0:v",
-                "-map", "[mixed_audio]",
+                "-map", "[final_audio]",
                 "-c:v", "copy",
                 "-c:a", "aac",
                 "-b:a", "192k",
                 final_short_path
             ]
-            subprocess.run(mix_cmd, capture_output=True, text=True, check=True)
+            # Windows fix: retry BGM mixing on file locking
+            for attempt in range(3):
+                try:
+                    subprocess.run(mix_cmd, capture_output=True, text=True, check=True)
+                    break
+                except subprocess.CalledProcessError as e:
+                    if attempt == 2:
+                        raise
+                    log.info(f"[Short Generator] BGM mix attempt {attempt+1} failed, retrying: {e.stderr[:200]}")
+                    time.sleep(1)
             if os.path.exists(temp_short_unmixed_path):
                 os.remove(temp_short_unmixed_path)
         else:
             shutil.move(temp_short_unmixed_path, final_short_path)
 
-        # Clean up temporary dir
+        # Clean up temporary dir - Windows fix with retry
         try:
-            shutil.rmtree(short_temp_dir)
+            for attempt in range(3):
+                try:
+                    shutil.rmtree(short_temp_dir)
+                    break
+                except PermissionError:
+                    if attempt == 2:
+                        raise
+                    time.sleep(1)
         except Exception:
             pass
 
@@ -531,3 +604,4 @@ class ShortGenerator:
                 json.dump(state, f, indent=2)
 
         return short_metadata
+

@@ -175,6 +175,7 @@ class FreeLLMAPIClient:
             "Content-Type": "application/json",
         }
         
+
         try:
             response = self.client.post(
                 self.chat_url,

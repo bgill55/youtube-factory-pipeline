@@ -8,15 +8,10 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 
-# Safe print wrapper to prevent Windows cp1252 encoding crashes on console output
-def print(*args, **kwargs):
-    try:
-        text = " ".join(str(a) for a in args)
-        encoding = sys.stdout.encoding or "utf-8"
-        text_safe = text.encode(encoding, errors="replace").decode(encoding, errors="replace")
-        __builtins__['print'](text_safe, **kwargs)
-    except Exception:
-        __builtins__['print'](*args, **kwargs)
+from youtube_factory.logging_utils import get_logger
+
+log = get_logger("agent_uploader")
+
 
 class UploaderAgent:
     def __init__(self, config):
@@ -119,7 +114,7 @@ class UploaderAgent:
             creds = self.get_credentials(run_dir)
         except FileNotFoundError as e:
             # Non-blocking credentials error: log details and return success for local file creation
-            print(str(e))
+            log.warning("YouTube credentials not configured: %s", str(e))
             return {
                 "status": "SKIPPED_CREDENTIALS_MISSING",
                 "video_file": video_file,
@@ -127,7 +122,7 @@ class UploaderAgent:
             }
 
         # 2. Upload
-        print(f"[YouTube Uploader] Uploading {video_file} to YouTube as '{video_title}'...")
+        log.info("Uploading %s to YouTube as '%s'...", video_file, video_title)
         youtube = build("youtube", "v3", credentials=creds)
 
         # 3. Compile a professional, SEO-optimized video description
@@ -142,9 +137,9 @@ class UploaderAgent:
             how_to = seo_research.get("how_to", [])
             if related or how_to:
                 description_lines.append("===========================================")
-                description_lines.append("🔍 RELATED TOPICS:")
+                description_lines.append("\U0001f50d RELATED TOPICS:")
                 for q in (related + how_to)[:5]:
-                    description_lines.append(f"• {q}")
+                    description_lines.append(f"\u2022 {q}")
                 description_lines.append("===========================================")
                 description_lines.append("")
         
@@ -152,12 +147,12 @@ class UploaderAgent:
         featured_links = idea_output.get("featured_links", [])
         if featured_links:
             description_lines.append("===========================================")
-            description_lines.append("🔗 FEATURED LINKS & RESOURCES:")
+            description_lines.append("\U0001f517 FEATURED LINKS & RESOURCES:")
             for link in featured_links:
                 name = link.get("name", "Link")
                 url = link.get("url", "")
                 if url:
-                    description_lines.append(f"• {name}: {url}")
+                    description_lines.append(f"\u2022 {name}: {url}")
             description_lines.append("===========================================")
             description_lines.append("")
             
@@ -166,15 +161,15 @@ class UploaderAgent:
         channel_handle = self.config.get("channel", {}).get("handle", "@WeightnSee")
         channel_tagline = self.config.get("channel", {}).get("tagline", "Your signal through the noise of AI.")
         
-        description_lines.append(f"🔔 SUBSCRIBE TO {channel_name.upper()}:")
+        description_lines.append(f"\U0001f514 SUBSCRIBE TO {channel_name.upper()}:")
         description_lines.append(f"{channel_tagline}")
         clean_handle = channel_handle.replace("@", "")
         description_lines.append(f"Subscribe: https://www.youtube.com/@{clean_handle}")
         description_lines.append("")
         
-        description_lines.append("📲 FOLLOW US ON SOCIALS:")
-        description_lines.append(f"• X (Twitter): https://x.com/{clean_handle}")
-        description_lines.append(f"• Instagram: https://instagram.com/{clean_handle}")
+        description_lines.append("\U0001f4f2 FOLLOW US ON SOCIALS:")
+        description_lines.append(f"\u2022 X (Twitter): https://x.com/{clean_handle}")
+        description_lines.append(f"\u2022 Instagram: https://instagram.com/{clean_handle}")
         description_lines.append("")
         
         # Add guide link if available
@@ -183,7 +178,7 @@ class UploaderAgent:
         # Create trackable short links
         import re
         topic_slug = re.sub(r'[^a-z0-9]+', '-', idea_output.get("selected_topic", "video").lower()).strip('-')[:50]
-        from pipeline.shortio_manager import ShortioManager
+        from youtube_factory.shortio import ShortioManager
         shortio_key = os.environ.get("SHORTIO_API_KEY", "sk_tHnZp3W2JMePecTg")
         shortio = ShortioManager(shortio_key)
         
@@ -195,11 +190,11 @@ class UploaderAgent:
             if guide_url:
                 utm_guide = f"{guide_url}?utm_source=youtube&utm_medium=description&utm_campaign={topic_slug}"
                 short_guide = shortio.create_short_link(utm_guide, topic_slug) or utm_guide
-                description_lines.append("📖 FULL WRITTEN GUIDE:")
+                description_lines.append("\U0001f4d6 FULL WRITTEN GUIDE:")
                 description_lines.append("Complete step-by-step guide with code examples, tools, and resources:")
                 description_lines.append(short_guide)
             else:
-                description_lines.append("📖 FULL WRITTEN GUIDE:")
+                description_lines.append("\U0001f4d6 FULL WRITTEN GUIDE:")
                 description_lines.append("Complete step-by-step guide with code examples, tools, and resources:")
                 description_lines.append("Guide available soon - check back later!")
             description_lines.append("")
@@ -208,7 +203,7 @@ class UploaderAgent:
         wiki_url = "https://github.com/bgill55/-weightandsee-guides/blob/Master/README.md"
         utm_wiki = f"{wiki_url}?utm_source=youtube&utm_medium=description&utm_campaign={topic_slug}"
         short_wiki = shortio.create_short_link(utm_wiki, f"wiki-{topic_slug}") or utm_wiki
-        description_lines.append("📚 ALL GUIDES & TUTORIALS:")
+        description_lines.append("\U0001f4da ALL GUIDES & TUTORIALS:")
         description_lines.append("Browse every guide with code, resources, and step-by-step instructions:")
         description_lines.append(short_wiki)
         description_lines.append("")
@@ -245,12 +240,12 @@ class UploaderAgent:
             # Even with LLM description, append validated featured_links and guide URL
             appendix = ""
             if featured_links:
-                appendix += "\n\n===========================================\n🔗 FEATURED LINKS & RESOURCES:\n"
+                appendix += "\n\n===========================================\n\U0001f517 FEATURED LINKS & RESOURCES:\n"
                 for link in featured_links:
                     name = link.get("name", "Link")
                     url = link.get("url", "")
                     if url:
-                        appendix += f"• {name}: {url}\n"
+                        appendix += f"\u2022 {name}: {url}\n"
                 appendix += "==========================================="
             # Add guide URL if available
             guide_url = None
@@ -267,12 +262,12 @@ class UploaderAgent:
                 # Use short.io tracked link
                 utm_guide = f"{guide_url}?utm_source=youtube&utm_medium=description&utm_campaign={topic_slug}"
                 short_guide = shortio.create_short_link(utm_guide, topic_slug) or utm_guide
-                appendix += f"\n\n📖 FULL WRITTEN GUIDE:\nComplete step-by-step guide with code examples, tools, and resources:\n{short_guide}"
+                appendix += f"\n\n\U0001f4d6 FULL WRITTEN GUIDE:\nComplete step-by-step guide with code examples, tools, and resources:\n{short_guide}"
             # Add wiki link with short.io tracking
             wiki_url = "https://github.com/bgill55/-weightandsee-guides/blob/Master/README.md"
             utm_wiki = f"{wiki_url}?utm_source=youtube&utm_medium=description&utm_campaign={topic_slug}"
             short_wiki = shortio.create_short_link(utm_wiki, f"wiki-{topic_slug}") or utm_wiki
-            appendix += f"\n\n📚 ALL GUIDES & TUTORIALS:\nBrowse every guide with code, resources, and step-by-step instructions:\n{short_wiki}"
+            appendix += f"\n\n\U0001f4da ALL GUIDES & TUTORIALS:\nBrowse every guide with code, resources, and step-by-step instructions:\n{short_wiki}"
             if appendix:
                 video_description = llm_description.rstrip() + appendix
             else:
@@ -311,7 +306,7 @@ class UploaderAgent:
         while response is None:
             status, response = request.next_chunk()
             if status:
-                print(f"[YouTube Uploader] Progress: {int(status.progress() * 100)}%")
+                log.info("Upload progress: %d%%", int(status.progress() * 100))
 
         video_id = response.get("id")
         video_url = f"https://www.youtube.com/watch?v={video_id}"
@@ -320,28 +315,28 @@ class UploaderAgent:
         thumbnail_path = os.path.join(run_dir, "thumbnail.jpg")
         if os.path.exists(thumbnail_path):
             try:
-                print(f"[YouTube Uploader] Uploading custom thumbnail from {thumbnail_path}...")
+                log.info("Uploading custom thumbnail from %s...", thumbnail_path)
                 thumbnail_request = youtube.thumbnails().set(
                     videoId=video_id,
                     media_body=MediaFileUpload(thumbnail_path, mimetype="image/jpeg")
                 )
                 thumbnail_request.execute()
-                print("[YouTube Uploader] Custom thumbnail uploaded successfully!")
+                log.info("Custom thumbnail uploaded successfully!")
             except Exception as e:
-                print(f"[YouTube Uploader] Warning: Could not upload custom thumbnail: {str(e)}")
-                print("[YouTube Uploader] Note: Custom thumbnails require YouTube channel phone verification (standard API rule).")
+                log.warning("Could not upload custom thumbnail: %s", str(e))
+                log.info("Note: Custom thumbnails require YouTube channel phone verification (standard API rule).")
 
-        print(f"[YouTube Uploader] Video uploaded successfully! Video URL: {video_url}")
+        log.info("Video uploaded successfully! Video URL: %s", video_url)
 
         # Auto-categorize into playlist
         try:
-            from pipeline.playlist_manager import PlaylistManager
+            from youtube_factory.playlists import PlaylistManager
             pm = PlaylistManager(self.config)
             pm.get_service(run_dir)
             topic = idea_output.get("selected_topic", "")
             pm.categorize_video(video_id, topic, video_description)
         except Exception as e:
-            print(f"[YouTube Uploader] Playlist categorization skipped: {e}")
+            log.warning("Playlist categorization skipped: %s", e)
 
         result = {
             "status": "SUCCESS",
@@ -355,7 +350,7 @@ class UploaderAgent:
         if short_output and short_output.get("status") == "SUCCESS" and short_output.get("video_file"):
             short_file = short_output["video_file"]
             if os.path.exists(short_file):
-                print(f"[YouTube Uploader] Uploading short: {short_file}")
+                log.info("Uploading short: %s", short_file)
                 try:
                     short_result = self.upload_short({
                         "short_file": short_file,
@@ -367,11 +362,11 @@ class UploaderAgent:
                     })
                     result["short_url"] = short_result.get("video_url")
                     result["short_id"] = short_result.get("video_id")
-                    print(f"[YouTube Uploader] Short uploaded: {short_result.get('video_url')}")
+                    log.info("Short uploaded: %s", short_result.get("video_url"))
                 except Exception as e:
-                    print(f"[YouTube Uploader] Warning: Short upload failed: {e}")
+                    log.warning("Short upload failed: %s", e)
             else:
-                print(f"[YouTube Uploader] Short file not found: {short_file}")
+                log.warning("Short file not found: %s", short_file)
 
         return result
 
@@ -379,7 +374,7 @@ class UploaderAgent:
         """Upload a vertical Short MP4 to YouTube.
 
         Shorts do NOT require channel phone-verification — any account can upload
-        them via the Data API v3 as long as the video is ≤ 60 s and 9:16.
+        them via the Data API v3 as long as the video is \u2264 60 s and 9:16.
         We inject #Shorts into title and description so YouTube's classifier
         picks it up immediately.
         """
@@ -413,11 +408,11 @@ class UploaderAgent:
         try:
             creds = self.get_credentials(run_dir)
         except FileNotFoundError as e:
-            print(str(e))
+            log.warning("YouTube Short upload skipped \u2014 credentials not configured: %s", str(e))
             return {
                 "status": "SKIPPED_CREDENTIALS_MISSING",
                 "short_file": short_file,
-                "message": "YouTube Short upload skipped — credentials not configured. The Short MP4 is ready locally."
+                "message": "YouTube Short upload skipped \u2014 credentials not configured. The Short MP4 is ready locally."
             }
 
         # 2. Build Shorts description (concise, mobile-first)
@@ -431,7 +426,7 @@ class UploaderAgent:
         short_guide = None
         if guide_url:
             try:
-                from pipeline.shortio_manager import ShortioManager
+                from youtube_factory.shortio import ShortioManager
                 import re
                 shortio_key = os.environ.get("SHORTIO_API_KEY", "sk_tHnZp3W2JMePecTg")
                 shortio = ShortioManager(shortio_key)
@@ -440,7 +435,7 @@ class UploaderAgent:
                 utm_guide = f"{guide_url}?utm_source=youtube&utm_medium=shorts&utm_campaign={topic_slug}"
                 short_guide = shortio.create_short_link(utm_guide, f"sh-{topic_slug}") or utm_guide
             except Exception as e:
-                print(f"[YouTube Uploader] Warning: Shortio link creation failed for Short: {e}")
+                log.warning("Shortio link creation failed for Short: %s", e)
                 short_guide = guide_url
 
         description_lines = []
@@ -453,19 +448,19 @@ class UploaderAgent:
         # Link back to guide and long-form video if available
         has_links = False
         if short_guide:
-            description_lines.append(f"📖 Full Guide: {short_guide}")
+            description_lines.append(f"\U0001f4d6 Full Guide: {short_guide}")
             has_links = True
             
         long_form_steps = inputs.get("steps", {})
         long_video_id = (long_form_steps.get("UPLOAD", {}) or {}).get("output", {}).get("video_id")
         if long_video_id:
-            description_lines.append(f"▶️ Full video: https://www.youtube.com/watch?v={long_video_id}")
+            description_lines.append(f"\u25b6\ufe0f Full video: https://www.youtube.com/watch?v={long_video_id}")
             has_links = True
             
         if has_links:
             description_lines.append("")
 
-        description_lines.append(f"🔔 Subscribe: https://www.youtube.com/@{clean_handle}")
+        description_lines.append(f"\U0001f514 Subscribe: https://www.youtube.com/@{clean_handle}")
         description_lines.append("")
         hashtag_list = [f"#{t.strip().replace(' ', '')}" for t in keywords if t]
         brand_hashtag = f"#{channel_name.replace(' ', '')}"
@@ -477,7 +472,7 @@ class UploaderAgent:
         short_description = "\n".join(description_lines)
 
         # 3. Upload
-        print(f"[YouTube Uploader] Uploading Short '{short_title}' to YouTube...")
+        log.info("Uploading Short '%s' to YouTube...", short_title)
         youtube = build("youtube", "v3", credentials=creds)
 
         body = {
@@ -506,19 +501,22 @@ class UploaderAgent:
             media_body=media
         )
 
+        # Upload chunk-by-chunk
         response = None
         while response is None:
             status, response = request.next_chunk()
             if status:
-                print(f"[YouTube Uploader] Short upload progress: {int(status.progress() * 100)}%")
+                log.info("Short upload progress: %d%%", int(status.progress() * 100))
 
-        short_video_id = response.get("id")
-        short_url = f"https://www.youtube.com/shorts/{short_video_id}"
-        print(f"[YouTube Uploader] Short uploaded successfully! URL: {short_url}")
+        video_id = response.get("id")
+        video_url = f"https://www.youtube.com/watch?v={video_id}"
+
+        log.info("Short uploaded successfully! URL: %s", video_url)
 
         return {
             "status": "SUCCESS",
-            "video_id": short_video_id,
-            "video_url": short_url,
-            "short_file": short_file
+            "video_id": video_id,
+            "video_url": video_url,
+            "video_file": short_file
         }
+

@@ -12,7 +12,8 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 
-logger = logging.getLogger(__name__)
+from youtube_factory.logging_utils import get_logger
+logger = get_logger("agent_comments")
 
 
 class CommentAgent:
@@ -148,7 +149,7 @@ class CommentAgent:
 
     def generate_reply(self, comment_text, video_title="", channel_name="Weight and See"):
         """Generate a reply to a comment using LLM."""
-        from pipeline.freellmapi_client import FreeLLMAPIClient
+        from youtube_factory.freellmapi import FreeLLMAPIClient
 
         freellmapi_cfg = self.config.get("freellmapi", {})
         llm_client = FreeLLMAPIClient(
@@ -287,3 +288,4 @@ if __name__ == "__main__":
     print(f"Found {len(comments)} recent comments")
     for c in comments[:5]:
         print(f"  [{c['author']}] {c['text'][:60]}...")
+

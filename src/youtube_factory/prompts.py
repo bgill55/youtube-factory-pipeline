@@ -91,12 +91,12 @@ IMPORTANT: Output ONLY the JSON object above. No markdown, no extra text, no exp
 TASK: You are a professional YouTube Scriptwriter for the "Weight and See" channel.
 Create witty, engaging, educational, HIGH-RETENTION video scripts using 3-Act Structure:
 
-1. HOOK (15-30s): STRONG opening -- shock, paradox, or "wait, what?" moment. Immediate curiosity gap + visual direction. NO "In today's video" filler. Jump straight to the fascinating bit. First line must make them stop scrolling. CRITICAL: The subject (tool, model, or product name from the title) MUST be mentioned by name within the first 100 words (first 2-3 narrator lines). Name the actual subject before introducing the analogy. In the HOOK section, each [Visual:] scene must contain NO MORE than 6-8 words of [Narrator] text -- targeting a visual change every 2.5-3 seconds. Every sentence should have its own [Visual:]. Fast cuts in the hook keep viewers from clicking away.
+1. HOOK (15-30s): STRONG opening -- shock, paradox, or "wait, what?" moment. Immediate curiosity gap + visual direction. NO "In today's video" filler. Jump straight to the fascinating bit. First line must make them stop scrolling. CRITICAL: The subject (tool, model, or product name from the title) MUST be mentioned by name within the first 100 words (first 2-3 narrator lines). Name the actual subject immediately. In the HOOK section, each [Visual:] scene must contain NO MORE than 6-8 words of [Narrator] text -- targeting a visual change every 2.5-3 seconds. Every sentence should have its own [Visual:]. Fast cuts in the hook keep viewers from clicking away.
 
 HOOK SPECIFIC GUIDANCE:
 - If the source material contains a government/regulatory action against an AI company, lead with the IRONY: the government killed the model, but the "jailbreak" was just asking the AI to fix a bug. Frame it as: "The government just killed [Model]. The reason? National security. But the 'jailbreak' they're terrified of? It's literally just asking the AI to fix a bug. If that's the new standard for a shutdown, your entire coding workflow just became a target."
 - If the source contains a government/regulatory directive citing national security, lead with: "The government just killed [Model]. The reason? National security. But the 'jailbreak' they're terrified of? It's literally just asking the AI to fix a bug. If that's the new standard for a shutdown, your entire coding workflow just became a target."
-- MUST mention the actual model/product name within first 100 words (first 2-3 narrator lines). Name the actual subject before introducing the analogy.
+- MUST mention the actual model/product name within first 100 words (first 2-3 narrator lines). Name the actual subject immediately.
 - In the HOOK section, each [Visual:] scene must contain NO MORE than 6-8 words of [Narrator] text -- targeting a visual change every 2.5-3 seconds. Every sentence should have its own [Visual:]. Fast cuts in the hook keep viewers from clicking away.
 
 2. BREAKDOWN/CONTEXT: Explain the core concept DIRECTLY -- NO ANALOGIES, NO METAPHORS, NO STORYTELLING DEVICES. This is a TECH NEWS channel. Use real-life use cases and concrete technical comparisons: "This model runs at 40 tokens/sec on a 4090 -- that's 3x faster than Llama 3 at the same quantization level." Reference actual specs, benchmarks, and real-world performance. Show HOW PEOPLE ACTUALLY USE THIS -- real workflows, real problems solved. "A developer uses this to auto-generate unit tests for their CI pipeline" -- not "it's like having a tireless QA engineer." Include 2-3 different visual scenes here for variety.
@@ -426,6 +426,7 @@ GUIDELINES:
 - innovation_hooks = things that make viewers say "wait, what?"
 - demo_ideas = visualizable, screen-recordable actions
 - code_snippets = 3-10 lines max each, copy-pasteable
+- Crucial: Ensure that any double quotes (") inside JSON string values (especially inside "code_snippets", "readme_summary", and "architecture_notes") are properly escaped with a backslash (\") to keep the JSON syntax valid.
 - If source is thin, infer reasonably from context.
 - NO markdown, NO explanations, raw JSON only.
 """,

@@ -32,12 +32,13 @@ Each agent is **independently usable**, **provider-agnostic**, and **configured 
 | `ScriptwriterAgent` | 3-act retention scripts | Hook → Breakdown → Deep Dive + CTA |
 | `VoiceoverAgent` | TTS via OmniVoice/Edge/Supertonic | Multi-speaker, word-level timestamps, CPU-only Supertonic M4 |
 | `VisualAssetAgent` | B-roll + AI images + thumbnails | Pexels / SD / Fal / Pollinations / local |
-| `AudioGenAgent` | BGM via Stable Audio 3 | Ducking, volume automation |
+| `AudioGeneratorAgent` | BGM via Stable Audio 3 | Ducking, volume automation |
 | `VideoAssemblerAgent` | FFmpeg assembly | Subtitles, ducking, 4K output |
+| `CommentAgent` | YouTube comment management | Reply, moderate, analyze sentiment |
 | `ShortGenerator` | 9:16 vertical clips | Auto-scene selection ≤58s |
 | `UploaderAgent` | YouTube Data API v3 | Playlists, thumbnails, Shorts |
 | `GuideGeneratorAgent` | HTML resource pages | SEO-optimized, deployable to GitHub Pages |
-| `CommunityAgent` | YouTube Community posts | Auto-generated from video outputs |
+| `CommunityPostAgent` | YouTube Community posts | Auto-generated from video outputs |
 
 ---
 

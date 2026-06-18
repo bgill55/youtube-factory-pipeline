@@ -1,6 +1,6 @@
 """YouTube Factory Pipeline - Modular video production agents."""
 
-__version__ = "0.1.0"
+__version__ = "0.4.0"
 
 # Core orchestration
 from youtube_factory.orchestrator import (
@@ -18,7 +18,11 @@ from youtube_factory.orchestrator import (
     STAGE_SHORTS,
     STAGE_GUIDE_DEPLOY,
     STAGE_UPLOAD,
+    STAGE_COMPLETED,
+    STAGE_VIDEO_ANALYSIS,
+    STAGE_SCRIPT_BUILD,
     STAGES,
+    ASSET_FIRST_STAGES,
 )
 
 # Config & LLM
@@ -56,6 +60,9 @@ from youtube_factory.agents.community import CommunityPostAgent
 from youtube_factory.agents.analytics import AnalyticsAgent
 from youtube_factory.agents.research import ResearchAgent
 from youtube_factory.agents.scraper import WebsiteScraper
+from youtube_factory.agents.script_builder import ScriptBuilderAgent
+from youtube_factory.agents.video_analysis import VideoAnalysisAgent
+from youtube_factory.agents.comments import CommentAgent
 
 # Utilities
 from youtube_factory.scheduler import BackgroundScheduler
@@ -63,7 +70,6 @@ from youtube_factory.shortio import ShortioManager
 from youtube_factory.guide_deploy import GuideDeployer
 from youtube_factory.playlists import PlaylistManager
 from youtube_factory.video_providers import VideoProviderManager
-from youtube_factory.shorts import ShortGenerator
 
 __all__ = [
     # Orchestration
@@ -81,7 +87,11 @@ __all__ = [
     "STAGE_SHORTS",
     "STAGE_GUIDE_DEPLOY",
     "STAGE_UPLOAD",
+    "STAGE_COMPLETED",
+    "STAGE_VIDEO_ANALYSIS",
+    "STAGE_SCRIPT_BUILD",
     "STAGES",
+    "ASSET_FIRST_STAGES",
     # Config & LLM
     "load_config",
     "query_llm",
@@ -113,6 +123,9 @@ __all__ = [
     "AnalyticsAgent",
     "ResearchAgent",
     "WebsiteScraper",
+    "ScriptBuilderAgent",
+    "VideoAnalysisAgent",
+    "CommentAgent",
     # Utilities
     "BackgroundScheduler",
     "ShortioManager",

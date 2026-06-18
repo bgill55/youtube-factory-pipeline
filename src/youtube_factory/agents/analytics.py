@@ -13,7 +13,8 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 
-logger = logging.getLogger(__name__)
+from youtube_factory.logging_utils import get_logger
+logger = get_logger("agent_analytics")
 
 
 class AnalyticsAgent:

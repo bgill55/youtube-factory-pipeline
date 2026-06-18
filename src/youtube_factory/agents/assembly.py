@@ -1,3 +1,6 @@
+from youtube_factory.logging_utils import get_logger
+
+log = get_logger("agent_video")
 import os
 import json
 import subprocess
@@ -58,7 +61,7 @@ class VideoAssemblerAgent:
                     continue
                 words.append({"word": word, "start": start, "end": end})
             except Exception as e:
-                print(f"[Video Agent] Error parsing block {idx}: {e}")
+                log.info(f"[Video Agent] Error parsing block {idx}: {e}")
 
         if not words:
             # Fallback to direct copy if parsing failed
@@ -139,11 +142,11 @@ class VideoAssemblerAgent:
             output_path
         ]
         try:
-            print(f"[Video Agent] Normalizing bumper {os.path.basename(input_path)} to {target_width}x{target_height} at {target_fps} fps...")
+            log.info(f"[Video Agent] Normalizing bumper {os.path.basename(input_path)} to {target_width}x{target_height} at {target_fps} fps...")
             subprocess.run(cmd, capture_output=True, text=True, check=True)
             return True
         except Exception as e:
-            print(f"[Video Agent] Failed to normalize bumper {input_path}: {e}")
+            log.info(f"[Video Agent] Failed to normalize bumper {input_path}: {e}")
             import shutil
             shutil.copy(input_path, output_path)
             return False
@@ -413,9 +416,29 @@ class VideoAssemblerAgent:
             self.normalize_bumper(outro_file, outro_bumper_path, width, height, fps)
             video_list.append("outro_bumper.mp4")
 
+        # Normalize audio in each video file to consistent format before concat
+        normalized_video_list = []
+        for i, v_name in enumerate(video_list):
+            norm_name = f"norm_{v_name}"
+            norm_path = os.path.join(video_temp_dir, norm_name)
+            src_path = os.path.join(video_temp_dir, v_name)
+            # Normalize audio: 44100Hz, mono, 192k AAC
+            norm_cmd = [
+                "ffmpeg", "-y",
+                "-i", src_path,
+                "-c:v", "copy",
+                "-af", "aresample=44100,pan=mono|c0=0.5*c0+0.5*c1",
+                "-c:a", "aac",
+                "-b:a", "192k",
+                norm_path
+            ]
+            log.info(f"[Video Agent] Normalizing audio for {v_name}...")
+            subprocess.run(norm_cmd, cwd=video_temp_dir, capture_output=True, text=True, check=True, timeout=60)
+            normalized_video_list.append(norm_name)
+        
         concat_list_path = os.path.join(video_temp_dir, "concat_list.txt")
         with open(concat_list_path, "w", encoding="utf-8") as f:
-            for f_name in video_list:
+            for f_name in normalized_video_list:
                 f.write(f"file '{f_name}'\n")
 
         final_video_name = "final_output.mp4"
@@ -444,7 +467,7 @@ class VideoAssemblerAgent:
                 "-pix_fmt", "yuv420p",
                 f"../{temp_video_name}"
             ]
-            print("[Video Agent] Concatenating scenes with concat demuxer...")
+            log.info("[Video Agent] Concatenating scenes with concat demuxer...")
             subprocess.run(concat_cmd, cwd=video_temp_dir, capture_output=True, text=True, check=True)
         else:
             # Single video, just copy
@@ -455,11 +478,12 @@ class VideoAssemblerAgent:
         audio_settings = self.config.get("audio_settings", {})
         
         if bg_music_file and os.path.exists(bg_music_file):
-            print(f"[Video Agent] Mixing background music from {bg_music_file}...")
+            log.info(f"[Video Agent] Mixing background music from {bg_music_file}...")
             
             # Fetch sidechain/ducking parameters
-            bg_vol = audio_settings.get("bg_music_volume", 0.15)
-            thresh = audio_settings.get("ducking_threshold", 0.10)
+            # Use same BGM boost as Shorts (1.33x) for consistent volume
+            bg_vol = audio_settings.get("bg_music_volume", 0.15) * 1.33
+            thresh = audio_settings.get("ducking_threshold", 0.09)
             ratio = audio_settings.get("ducking_ratio", 4.0)
             attack = audio_settings.get("ducking_attack", 200)
             release = audio_settings.get("ducking_release", 800)
@@ -473,7 +497,8 @@ class VideoAssemblerAgent:
                 f"[1:a]volume={bg_vol}[bg_music];"
                 f"[0:a]asplit=2[sc][voice];"
                 f"[bg_music][sc]sidechaincompress=threshold={thresh}:ratio={ratio}:attack={attack}:release={release}[ducked_bg];"
-                f"[voice][ducked_bg]amix=inputs=2:duration=first[mixed_audio]"
+                f"[voice][ducked_bg]amix=inputs=2:duration=first[mixed];"
+                f"[mixed]loudnorm=I=-16:LRA=11:TP=-1.5[final_audio]"
             )
             
             mix_cmd = [
@@ -483,21 +508,21 @@ class VideoAssemblerAgent:
                 "-i", bg_music_file,
                 "-filter_complex", filter_complex,
                 "-map", "0:v",
-                "-map", "[mixed_audio]",
+                "-map", "[final_audio]",
                 "-c:v", "copy",
                 "-c:a", "aac",
                 "-b:a", "192k",
                 final_video_path
             ]
             
-            print(f"[Video Agent] Running FFmpeg BGM sidechain compress mix command...")
+            log.info(f"[Video Agent] Running FFmpeg BGM sidechain compress mix command...")
             subprocess.run(mix_cmd, capture_output=True, text=True, check=True)
             
             # Clean up temp file
             if os.path.exists(temp_video_path):
                 os.remove(temp_video_path)
         else:
-            print("[Video Agent] No background music configured. Skipping mix pass.")
+            log.info("[Video Agent] No background music configured. Skipping mix pass.")
             if os.path.exists(final_video_path):
                 os.remove(final_video_path)
             shutil.move(temp_video_path, final_video_path)

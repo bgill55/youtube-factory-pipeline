@@ -1,3 +1,6 @@
+from youtube_factory.logging_utils import get_logger
+
+log = get_logger("agent_audio_gen")
 import os
 # Disable tqdm progress bars BEFORE any imports to avoid [Errno 22] Invalid argument in Flask context
 # Must be set BEFORE torch/transformers/stable_audio_3 imports
@@ -7,17 +10,10 @@ import json
 import subprocess
 import numpy as np
 import unicodedata
-from pipeline.llm_utils import query_llm as _query_llm
-from pipeline.prompts import get_system_prompt
+from youtube_factory.llm import query_llm as _query_llm
+from youtube_factory.prompts import get_system_prompt
 
 
-def _safe_print(*args, **kwargs):
-    """Print that never crashes on Windows cp1252 consoles or detached stdout."""
-    try:
-        text = " ".join(str(a) for a in args)
-        print(text.encode(sys.stdout.encoding or "utf-8", errors="replace").decode(sys.stdout.encoding or "utf-8", errors="replace"), **kwargs)
-    except Exception:
-        pass
 
 
 def _normalize_text(text):
@@ -65,7 +61,7 @@ class AudioGeneratorAgent:
             if prompt:
                 return prompt
         except Exception as e:
-            _safe_print(f"[Audio Gen Agent] LLM prompt generation failed: {e}")
+            log.info(f"[Audio Gen Agent] LLM prompt generation failed: {e}")
 
         return default_prompt
 
@@ -77,7 +73,7 @@ class AudioGeneratorAgent:
         bg_music = self.config.get("bg_music", "none")
 
         if bg_music == "none":
-            print("[Audio Gen Agent] Background music is set to 'none'. Skipping.")
+            log.info("[Audio Gen Agent] Background music is set to 'none'. Skipping.")
             return {
                 "status": "SKIPPED",
                 "bg_music_file": None,
@@ -90,14 +86,14 @@ class AudioGeneratorAgent:
         if bg_music != "stable_audio_3":
             preset_path = os.path.join(workspace_dir, "assets", "background_music", bg_music)
             if os.path.exists(preset_path):
-                print(f"[Audio Gen Agent] Using preset background music: {preset_path}")
+                log.info(f"[Audio Gen Agent] Using preset background music: {preset_path}")
                 return {
                     "status": "SUCCESS",
                     "bg_music_file": preset_path,
                     "prompt": "Preset track"
                 }
             else:
-                print(f"[Audio Gen Agent] WARNING: Preset BGM file {bg_music} not found at {preset_path}. Skipping.")
+                log.info(f"[Audio Gen Agent] WARNING: Preset BGM file {bg_music} not found at {preset_path}. Skipping.")
                 return {
                     "status": "FAILED",
                     "bg_music_file": None,
@@ -106,13 +102,13 @@ class AudioGeneratorAgent:
 
 
         # Generate with Stable Audio 3
-        _safe_print("[Audio Gen Agent] Initializing Stable Audio 3 generation...")
+        log.info("[Audio Gen Agent] Initializing Stable Audio 3 generation...")
         selected_topic = _normalize_text(idea_output.get("selected_topic", "Tech Video"))
         keywords = [_normalize_text(k) for k in idea_output.get("keywords", ["technology"])]
 
         # Generate prompt using LLM and normalize away any fancy Unicode
         prompt = _normalize_text(self.query_llm_for_audio_prompt(selected_topic, keywords))
-        _safe_print(f"[Audio Gen Agent] Music prompt: '{prompt}'")
+        log.info(f"[Audio Gen Agent] Music prompt: '{prompt}'")
 
         # Cap music duration at Stable Audio 3 max limit (120 seconds)
         music_seconds = min(float(audio_duration) + 5.0, 120.0)
@@ -140,19 +136,19 @@ class AudioGeneratorAgent:
             # Determine device - try CUDA first, fall back to CPU
             if torch.cuda.is_available():
                 device = "cuda"
-                _safe_print("[Audio Gen Agent] CUDA available, using GPU.")
+                log.info("[Audio Gen Agent] CUDA available, using GPU.")
             else:
                 device = "cpu"
-                _safe_print("[Audio Gen Agent] No CUDA, using CPU (will be slow.).")
+                log.info("[Audio Gen Agent] No CUDA, using CPU (will be slow.).")
 
-            _safe_print(f"[Audio Gen Agent] Loading stable-audio-3 small-music model on {device}...")
+            log.info(f"[Audio Gen Agent] Loading stable-audio-3 small-music model on {device}...")
             model_half = (device == "cuda")
             model = StableAudioModel.from_pretrained(
                 "small-music",
                 device=device,
                 model_half=model_half
             )
-            _safe_print(f"[Audio Gen Agent] Model loaded. Generating {music_seconds:.1f}s of audio...")
+            log.info(f"[Audio Gen Agent] Model loaded. Generating {music_seconds:.1f}s of audio...")
 
             output = model.generate(
                 prompt=prompt,
@@ -164,11 +160,11 @@ class AudioGeneratorAgent:
 
             audio_tensor = output[0].cpu()
             sample_rate = model.model.sample_rate
-            _safe_print(f"[Audio Gen Agent] Audio generated! Shape: {audio_tensor.shape}, sample_rate: {sample_rate}")
+            log.info(f"[Audio Gen Agent] Audio generated! Shape: {audio_tensor.shape}, sample_rate: {sample_rate}")
 
             audio_np = audio_tensor.float().numpy().T
             sf.write(output_wav_path, audio_np, sample_rate)
-            _safe_print(f"[Audio Gen Agent] WAV audio saved to {output_wav_path}")
+            log.info(f"[Audio Gen Agent] WAV audio saved to {output_wav_path}")
 
             subprocess.run([
                 "ffmpeg", "-y",
@@ -181,7 +177,7 @@ class AudioGeneratorAgent:
             if os.path.exists(output_wav_path):
                 os.remove(output_wav_path)
 
-            _safe_print(f"[Audio Gen Agent] Generated MP3 saved successfully to {output_mp3_path}")
+            log.info(f"[Audio Gen Agent] Generated MP3 saved successfully to {output_mp3_path}")
 
             return {
                 "status": "SUCCESS",
@@ -191,7 +187,7 @@ class AudioGeneratorAgent:
 
         except Exception as e:
             sys.stderr = _original_stderr
-            _safe_print(f"[Audio Gen Agent] ERROR in audio generation: {str(e)}")
+            log.info(f"[Audio Gen Agent] ERROR in audio generation: {str(e)}")
             import traceback
             traceback.print_exc()
             return {
@@ -202,3 +198,4 @@ class AudioGeneratorAgent:
             }
         finally:
             sys.stderr = _original_stderr
+

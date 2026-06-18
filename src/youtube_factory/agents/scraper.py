@@ -1,3 +1,6 @@
+from youtube_factory.logging_utils import get_logger
+
+log = get_logger("agent_scraper")
 import os
 import json
 import time
@@ -13,18 +16,6 @@ try:
 except ImportError:
     HAS_PLAYWRIGHT = False
 
-
-import sys
-import builtins
-
-def safe_print(*args, **kwargs):
-    try:
-        text = " ".join(str(a) for a in args)
-        builtins.print(text, **kwargs)
-    except Exception:
-        pass
-
-print = safe_print
 
 
 class WebsiteScraper:
@@ -51,10 +42,10 @@ class WebsiteScraper:
     def _fetch_with_browser(self, url):
         """Fetch a URL using Playwright for JavaScript rendering."""
         if not HAS_PLAYWRIGHT:
-            print("[Scraper] Playwright not installed — falling back to requests")
+            log.info("[Scraper] Playwright not installed — falling back to requests")
             return self._fetch(url)
         
-        print(f"[Scraper] Using browser to render: {url[:60]}")
+        log.info(f"[Scraper] Using browser to render: {url[:60]}")
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             page = browser.new_page()
@@ -185,7 +176,7 @@ class WebsiteScraper:
 
         # Determine if we should use browser rendering
         use_browser = self.use_browser or HAS_PLAYWRIGHT
-        print(f"[Scraper] Starting crawl of {url} (max {max_pages} pages, browser={'yes' if use_browser else 'no'})")
+        log.info(f"[Scraper] Starting crawl of {url} (max {max_pages} pages, browser={'yes' if use_browser else 'no'})")
 
         while queue and len(pages) < max_pages:
             current_url = queue.pop(0)
@@ -200,7 +191,7 @@ class WebsiteScraper:
                 continue
 
             try:
-                print(f"[Scraper] Fetching ({len(pages)+1}/{max_pages}): {current_url[:80]}")
+                log.info(f"[Scraper] Fetching ({len(pages)+1}/{max_pages}): {current_url[:80]}")
                 
                 # Try requests first, fall back to browser if thin content
                 resp = self._fetch(current_url)
@@ -213,20 +204,20 @@ class WebsiteScraper:
 
                 # If content is thin and browser is available, retry with browser
                 if extracted["word_count"] < 200 and use_browser:
-                    print(f"[Scraper] Thin content ({extracted['word_count']} words) — retrying with browser...")
+                    log.info(f"[Scraper] Thin content ({extracted['word_count']} words) — retrying with browser...")
                     try:
                         resp = self._fetch_with_browser(current_url)
                         html = resp.text
                         extracted = self._extract_content(current_url, html)
-                        print(f"[Scraper] Browser render got {extracted['word_count']} words")
+                        log.info(f"[Scraper] Browser render got {extracted['word_count']} words")
                     except Exception as browser_err:
-                        print(f"[Scraper] Browser render failed: {browser_err}")
+                        log.info(f"[Scraper] Browser render failed: {browser_err}")
 
                 # Only keep pages with enough content
                 if extracted["word_count"] >= self.min_word_count:
                     pages.append(extracted)
                 else:
-                    print(f"[Scraper] Skipping {current_url[:60]} ({extracted['word_count']} words < {self.min_word_count})")
+                    log.info(f"[Scraper] Skipping {current_url[:60]} ({extracted['word_count']} words < {self.min_word_count})")
 
                 # Find more links to crawl
                 links = self._extract_links(current_url, html, base_domain)
@@ -236,17 +227,17 @@ class WebsiteScraper:
 
             except requests.exceptions.RequestException as e:
                 errors.append({"url": current_url, "error": str(e)})
-                print(f"[Scraper] Error fetching {current_url[:60]}: {e}")
+                log.info(f"[Scraper] Error fetching {current_url[:60]}: {e}")
             except Exception as e:
                 errors.append({"url": current_url, "error": str(e)})
-                print(f"[Scraper] Parse error on {current_url[:60]}: {e}")
+                log.info(f"[Scraper] Parse error on {current_url[:60]}: {e}")
 
             # Polite delay
             if queue:
                 time.sleep(self.delay)
 
         total_words = sum(p["word_count"] for p in pages)
-        print(f"[Scraper] Done. {len(pages)} pages scraped, {total_words} total words, {len(errors)} errors")
+        log.info(f"[Scraper] Done. {len(pages)} pages scraped, {total_words} total words, {len(errors)} errors")
 
         return {
             "pages": pages,
@@ -276,7 +267,7 @@ class WebsiteScraper:
         # Check if scraped data already exists from dashboard scrape
         shared_path = os.path.join(workspace_dir, "workspace", "scraped_content.json")
         if os.path.exists(shared_path):
-            print(f"[Scraper] Loading previously scraped data from {shared_path}")
+            log.info(f"[Scraper] Loading previously scraped data from {shared_path}")
             with open(shared_path, "r", encoding="utf-8") as f:
                 result = json.load(f)
             # Copy to run directory

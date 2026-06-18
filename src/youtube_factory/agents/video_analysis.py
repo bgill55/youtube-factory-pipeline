@@ -2,7 +2,7 @@
 VideoAnalysisAgent - Analyzes screen recordings to extract segments, 
 transcripts, and visual context for Asset-First video pipeline.
 """
-from pipeline.logging_utils import get_logger
+from youtube_factory.logging_utils import get_logger
 
 log = get_logger("agent_video_analysis")
 

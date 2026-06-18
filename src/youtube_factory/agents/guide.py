@@ -1,10 +1,13 @@
+from youtube_factory.logging_utils import get_logger
+
+log = get_logger("agent_guide")
 import os
 import json
 import re
 from datetime import datetime
-from pipeline.llm_utils import query_llm as _query_llm
-from pipeline.prompts import get_system_prompt
-from pipeline.guide_deployer import GuideDeployer
+from youtube_factory.llm import query_llm as _query_llm
+from youtube_factory.prompts import get_system_prompt
+from youtube_factory.guide_deploy import GuideDeployer
 
 
 class GuideGeneratorAgent:
@@ -42,8 +45,15 @@ class GuideGeneratorAgent:
         seo_research = idea_output.get("seo_research", {})
         hashtags = idea_output.get("optimized_hashtags", [])
         
-        # Use LLM to extract structured guide content from script
-        guide_data = self._extract_guide_data(selected_topic, concept_summary, script_content, featured_links)
+        # Use LLM to extract structured guide content from script and research
+        guide_data = self._extract_guide_data(
+            selected_topic, 
+            concept_summary, 
+            script_content, 
+            featured_links,
+            research_output,
+            run_dir
+        )
         
         # Generate HTML guide
         html_content = self._generate_html(
@@ -67,7 +77,7 @@ class GuideGeneratorAgent:
         with open(guide_json_path, "w", encoding="utf-8") as f:
             json.dump(guide_data, f, indent=2)
         
-        print(f"[Guide Generator] Guide page created: {guide_path}")
+        log.info(f"[Guide Generator] Guide page created: {guide_path}")
         
         return {
             "guide_path": guide_path,
@@ -86,7 +96,7 @@ class GuideGeneratorAgent:
         selected_topic = idea_output.get("selected_topic", "guide")
         
         if not guide_path or not os.path.exists(guide_path):
-            print("[Guide Deployer] No guide.html found — skipping deployment")
+            log.info("[Guide Deployer] No guide.html found — skipping deployment")
             return {"guide_url": None, "deployed": False}
         
         run_id = os.path.basename(run_dir)
@@ -94,18 +104,45 @@ class GuideGeneratorAgent:
             deployer = GuideDeployer(self.config)
             guide_url = deployer.deploy_guide(run_dir, run_id, selected_topic)
             if guide_url:
-                print(f"[Guide Deployer] Guide deployed to: {guide_url}")
+                log.info(f"[Guide Deployer] Guide deployed to: {guide_url}")
                 return {"guide_url": guide_url, "deployed": True}
             return {"guide_url": None, "deployed": False}
         except Exception as e:
-            print(f"[Guide Deployer] Deployment failed (non-fatal): {e}")
+            log.info(f"[Guide Deployer] Deployment failed (non-fatal): {e}")
             return {"guide_url": None, "deployed": False, "error": str(e)}
 
-    def _extract_guide_data(self, topic, summary, script_content, featured_links):
-        """Use LLM to extract structured guide data from script content."""
+    def _extract_guide_data(self, topic, summary, script_content, featured_links, research_output=None, run_dir=None):
+        """Use LLM to extract structured guide data from script content and research context."""
         
+        research_context = ""
+        if research_output and isinstance(research_output, dict) and any(research_output.values()):
+            tech_stack_str = ", ".join(research_output.get("tech_stack", [])) if isinstance(research_output.get("tech_stack"), list) else str(research_output.get("tech_stack", ""))
+            key_features_str = "\n".join(f"- {f}" for f in research_output.get("key_features", [])) if isinstance(research_output.get("key_features"), list) else str(research_output.get("key_features", ""))
+            
+            code_snippets = research_output.get("code_snippets", [])
+            code_snippets_str = ""
+            if isinstance(code_snippets, list):
+                code_snippets_str = "\n\n".join(f"Snippet:\n{s}" for s in code_snippets)
+            else:
+                code_snippets_str = str(code_snippets)
+                
+            research_context = f"""
+RESEARCH CONTEXT (Use this to get concrete code, commands, steps, and tool names):
+- Project Name: {research_output.get("project_name", "")}
+- One-Liner: {research_output.get("one_liner", "")}
+- Tech Stack: {tech_stack_str}
+- Key Features:
+{key_features_str}
+- Code Snippets / Commands:
+{code_snippets_str}
+- Architecture Notes:
+{research_output.get("architecture_notes", "")}
+- Readme/Repository Details:
+{research_output.get("readme_summary", "")}
+"""
+
         system_prompt = f"""You are a technical content editor creating a comprehensive resource guide.
-Given a video script and topic, extract structured data for a detailed guide page.
+Given a video script, topic, and technical research context, extract structured data for a detailed guide page.
 
 OUTPUT FORMAT (raw JSON only):
 {{
@@ -113,8 +150,8 @@ OUTPUT FORMAT (raw JSON only):
   "key_takeaways": ["Takeaway 1", "Takeaway 2", "Takeaway 3", "Takeaway 4", "Takeaway 5"],
   "prerequisites": ["Prerequisite 1", "Prerequisite 2"],
   "step_by_step": [
-    {{"title": "Step 1: Title", "description": "Detailed description of this step", "code_example": "optional code snippet or empty string"}},
-    {{"title": "Step 2: Title", "description": "Detailed description", "code_example": ""}}
+    {{"title": "Step 1: Title", "description": "Detailed description of this step. MUST be specific and explain HOW to do it, not just WHAT to do. Refer to concrete commands, tools, and configurations.", "code_example": "Provide a functional code example, CLI command, config snippet, or installation instruction. Do NOT leave this empty unless absolutely no code/command applies."}},
+    {{"title": "Step 2: Title", "description": "Detailed step-by-step description with precise instructions.", "code_example": "Code/CLI/Configuration snippet"}}
   ],
   "pro_tips": ["Expert tip 1", "Expert tip 2", "Expert tip 3"],
   "common_pitfalls": ["Pitfall 1: description", "Pitfall 2: description"],
@@ -130,24 +167,26 @@ OUTPUT FORMAT (raw JSON only):
 }}
 
 RULES:
-- Extract 5-7 key takeaways from the script
-- Create 3-5 step-by-step instructions based on the script's walkthrough
-- Include code examples where the script mentions commands or code
-- List all tools, repos, or services mentioned
-- Generate 3-5 FAQ items a viewer might ask
-- Be specific and technical — this is for people who watched the video and want to go deeper
+- Extract 5-7 key takeaways from the script and research context.
+- Create 3-5 step-by-step instructions based on the script's walkthrough and the technical research context.
+- IMPORTANT: The guide steps must be concrete. Instead of "Step 1: Set up your LLM", write "Step 1: Clone and install the LLM engine" and include the actual CLI commands (e.g. `git clone ...`, `npm install`) and configuration settings in the description and code examples.
+- Include actual code snippets, command line commands, and configuration properties (e.g. environment variable keys like OPENAI_API_KEY) in the `code_example` fields. Use the code snippets and readme summary from the Research Context to populate these.
+- List all tools, repos, or services mentioned. Use their real names (e.g., n8n, n8n-nodes-base, OpenAI API, sports APIs, TypeScript) and provide correct URLs if available in the inputs.
+- Generate 3-5 FAQ items containing actual technical questions a developer or viewer would ask.
+- Be highly specific and technical — this is a practical reference for viewers who want to implement the project.
 
 INPUT DATA:
 - Topic: {topic}
 - Summary: {summary}
 - Featured Links: {json.dumps(featured_links)}
 - Script Content:
-{script_content[:3000]}
+{script_content[:20000]}
+{research_context}
 
 OUTPUT: Raw JSON only."""
 
         try:
-            res = _query_llm(self.config, system_prompt, "Extract the guide data now.", task="script", require_json=True)
+            res = _query_llm(self.config, system_prompt, "Extract the guide data now.", task="script", require_json=True, max_tokens=4000)
             clean_text = res.strip()
             if clean_text.startswith("```"):
                 lines = clean_text.splitlines()
@@ -157,10 +196,24 @@ OUTPUT: Raw JSON only."""
                     lines = lines[:-1]
                 clean_text = "\n".join(lines).strip()
             
-            data = json.loads(clean_text)
-            return data
+            try:
+                data = json.loads(clean_text)
+                return data
+            except json.JSONDecodeError as decode_err:
+                log.info(f"[Guide Generator] JSON parsing failed: {decode_err}")
+                safe_text = clean_text.encode('ascii', errors='replace').decode('ascii')
+                log.info(f"[Guide Generator] Raw LLM response on parse failure:\n{safe_text}")
+                if run_dir:
+                    try:
+                        debug_path = os.path.join(run_dir, "guide_raw_failed.txt")
+                        with open(debug_path, "w", encoding="utf-8") as debug_file:
+                            debug_file.write(clean_text)
+                        log.info(f"[Guide Generator] Saved raw failed response to {debug_path}")
+                    except Exception as debug_err:
+                        log.info(f"[Guide Generator] Could not save debug file: {debug_err}")
+                raise
         except Exception as e:
-            print(f"[Guide Generator] LLM extraction failed: {e}. Using defaults.")
+            log.info(f"[Guide Generator] LLM extraction failed: {e}. Using defaults.")
             return self._get_default_guide_data(topic, summary, featured_links)
 
     def _get_default_guide_data(self, topic, summary, featured_links):
@@ -239,25 +292,28 @@ OUTPUT: Raw JSON only."""
     <meta property="og:description" content="{concept_summary[:200]}">
     <meta property="og:type" content="article">
     <title>{selected_topic} | {channel_name} Guide</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
     <style>
         :root {{
-            --bg-primary: #0f0f0f;
-            --bg-secondary: #1a1a1a;
-            --bg-card: #252525;
-            --text-primary: #f1f1f1;
-            --text-secondary: #a0a0a0;
-            --accent: #6366f1;
+            --bg-primary: #0b0f19;
+            --bg-secondary: #111827;
+            --bg-card: #1f2937;
+            --text-primary: #f3f4f6;
+            --text-secondary: #9ca3af;
+            --accent: #4f46e5;
             --accent-light: #818cf8;
-            --green: #22c55e;
-            --yellow: #eab308;
+            --green: #10b981;
+            --yellow: #f59e0b;
             --red: #ef4444;
-            --border: #333;
+            --border: #374151;
         }}
         
         * {{ box-sizing: border-box; margin: 0; padding: 0; }}
         
         body {{
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            font-family: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: var(--bg-primary);
             color: var(--text-primary);
             line-height: 1.7;
@@ -704,3 +760,4 @@ OUTPUT: Raw JSON only."""
 </html>"""
         
         return html
+

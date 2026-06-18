@@ -1,11 +1,24 @@
+from youtube_factory.logging_utils import get_logger
+
+log = get_logger("agent_research")
 import os
 import json
 import re
 import requests
-import subprocess
 from urllib.parse import urlparse
 from youtube_factory.llm import query_llm as _query_llm
 from youtube_factory.prompts import get_system_prompt
+
+# Agent-Reach Channels
+from agent_reach.channels.youtube import YouTubeChannel
+from agent_reach.channels.web import WebChannel
+from agent_reach.channels.github import GitHubChannel
+from agent_reach.channels.exa_search import ExaSearchChannel
+from agent_reach.channels.rss import RSSChannel
+from agent_reach.channels.twitter import TwitterChannel
+from agent_reach.channels.reddit import RedditChannel
+from agent_reach.channels.bilibili import BilibiliChannel
+from agent_reach.channels.xiaoyuzhou import XiaoyuzhouChannel
 
 
 class ResearchAgent:
@@ -17,19 +30,24 @@ class ResearchAgent:
             self.session.headers.update({"Authorization": f"token {self.github_token}"})
         self.session.headers.update({"User-Agent": "YouTube-Factory-Research-Agent"})
         
-        # Ensure gh CLI, mcporter (npm global) are in PATH
-        self._gh_path = "/c/Program Files/GitHub CLI"
-        self._npm_path = "/c/Users/brica/AppData/Roaming/npm"
+        # Initialize Agent-Reach channels
+        self.youtube_channel = YouTubeChannel()
+        self.web_channel = WebChannel()
+        self.github_channel = GitHubChannel()
+        self.exa_search_channel = ExaSearchChannel()
+        self.rss_channel = RSSChannel()
+        self.twitter_channel = TwitterChannel()
+        self.reddit_channel = RedditChannel()
+        self.bilibili_channel = BilibiliChannel()
+        self.xiaoyuzhou_channel = XiaoyuzhouChannel()
+
+        # Agent-Reach handles PATH and underlying tools, so remove hardcoded paths
         self._env = os.environ.copy()
-        paths_to_add = []
-        for p in [self._gh_path, self._npm_path]:
-            if p and p not in self._env.get("PATH", ""):
-                paths_to_add.append(p)
-        if paths_to_add:
-            self._env["PATH"] = ":".join(paths_to_add) + ":" + self._env["PATH"]
 
     def _run_cmd(self, cmd, timeout=60, parse_json=False):
-        """Run a command and return stdout, optionally parsing as JSON."""
+        """Run a shell command and return stdout, optionally parsing JSON."""
+        import subprocess
+        log.info(f"[Research Agent] Running command: {' '.join(cmd[:5])}...")
         try:
             result = subprocess.run(
                 cmd,
@@ -37,29 +55,35 @@ class ResearchAgent:
                 text=True,
                 timeout=timeout,
                 env=self._env,
-                shell=False
+                check=False
             )
-            if result.returncode == 0:
-                stdout = result.stdout.strip()
-                if parse_json and stdout:
-                    return json.loads(stdout)
-                return stdout
-            else:
-                print(f"[Research Agent] Command failed: {' '.join(cmd)} - {result.stderr}")
+            if result.returncode != 0:
+                log.warning(f"Command failed (code {result.returncode}): {result.stderr[:200]}")
                 return None
+            stdout = result.stdout.strip()
+            if parse_json:
+                import json
+                return json.loads(stdout) if stdout else None
+            return stdout
         except subprocess.TimeoutExpired:
-            print(f"[Research Agent] Command timed out: {' '.join(cmd)}")
-            return None
-        except json.JSONDecodeError as e:
-            print(f"[Research Agent] JSON parse error: {e}")
+            log.error(f"Command timed out after {timeout}s: {' '.join(cmd)}")
             return None
         except Exception as e:
-            print(f"[Research Agent] Command error: {e}")
+            log.error(f"Command failed: {e}")
             return None
 
     def _fetch_youtube_transcript(self, url):
-        """Fetch YouTube transcript using yt-dlp directly."""
-        print(f"[Research Agent] Fetching YouTube transcript via yt-dlp: {url}")
+        """Fetch YouTube transcript using Agent-Reach YouTubeChannel."""
+        log.info(f"[Research Agent] Fetching YouTube transcript via Agent-Reach: {url}")
+        transcript = self.youtube_channel.transcribe(url)
+        if not transcript:
+            log.warning("Failed to get YouTube transcript via Agent-Reach.")
+            # Fallback to yt-dlp if Agent-Reach fails?
+            # For now, proceed without transcript if Agent-Reach fails.
+            transcript = ""
+
+        # Keep yt-dlp for metadata (title, description, duration, channel, video_id)
+        # as YouTubeChannel.transcribe() doesn't seem to provide it.
         cmd = [
             "yt-dlp",
             "--write-auto-sub",
@@ -71,27 +95,31 @@ class ResearchAgent:
         ]
         result = self._run_cmd(cmd, timeout=120, parse_json=True)
         if result:
-            transcript = ""
-            # Try to get auto-generated subtitles
-            if result.get("automatic_captions"):
-                # yt-dlp doesn't download subs with --print-json, need separate call
-                pass
-            
-            # Get description and title
+            # Combine transcript with metadata
             return {
                 "type": "youtube",
                 "title": result.get("title", ""),
-                "content": result.get("description", "")[:8000],
+                "content": transcript or result.get("description", "")[:8000],
                 "duration": result.get("duration", 0),
                 "channel": result.get("uploader", ""),
                 "url": url,
                 "video_id": result.get("id", "")
             }
-        return None
+        else:
+            # If yt-dlp also fails, return what we have (transcript only)
+            return {
+                "type": "youtube",
+                "title": "Unknown Title",
+                "content": transcript,
+                "duration": 0,
+                "channel": "Unknown Channel",
+                "url": url,
+                "video_id": ""
+            }
 
     def _fetch_youtube_subtitles(self, url):
         """Fetch YouTube subtitles using yt-dlp."""
-        print(f"[Research Agent] Fetching YouTube subtitles via yt-dlp: {url}")
+        log.info(f"[Research Agent] Fetching YouTube subtitles via yt-dlp: {url}")
         cmd = [
             "yt-dlp",
             "--write-auto-sub",
@@ -115,26 +143,28 @@ class ResearchAgent:
         return None
 
     def _fetch_web_article(self, url):
-        """Fetch web article using Jina Reader."""
-        print(f"[Research Agent] Fetching web article via Jina Reader: {url}")
-        jina_url = f"https://r.jina.ai/{url}"
-        result = self._run_cmd(["curl", "-s", "-L", jina_url], timeout=30)
-        if result and len(result) > 100:
-            return {
-                "type": "article",
-                "title": "",
-                "content": result[:8000],
-                "url": url
-            }
+        """Fetch web article using Agent-Reach WebChannel."""
+        log.info(f"[Research Agent] Fetching web article via Agent-Reach: {url}")
+        try:
+            content = self.web_channel.read(url)
+            if content and len(content) > 100:
+                return {
+                    "type": "article",
+                    "title": "",
+                    "content": content[:8000],
+                    "url": url
+                }
+        except Exception as e:
+            log.info(f"[Research Agent] WebChannel read failed for {url}: {e}")
         return None
 
     def _search_exa(self, query):
         """Semantic web search using Exa via mcporter MCP."""
-        print(f"[Research Agent] Exa search via mcporter: {query}")
+        log.info(f"[Research Agent] Exa search via mcporter: {query}")
         # Use mcporter to call Exa MCP with flag-style args
+        # Agent-Reach should handle mcporter configuration
         cmd = [
-            "mcporter.cmd", "--config", "C:\\Users\\brica\\config\\mcporter.json",
-            "call", "exa.web_search_exa",
+            "mcporter.cmd", "call", "exa.web_search_exa",
             f'query={query}', 'numResults=5'
         ]
         result = self._run_cmd(cmd, timeout=60)
@@ -154,30 +184,20 @@ class ResearchAgent:
         return None
 
     def _fetch_rss(self, url):
-        """Fetch RSS feed using feedparser."""
-        print(f"[Research Agent] Fetching RSS via feedparser: {url}")
+        """Fetch RSS feed using Agent-Reach RSSChannel."""
+        log.info(f"[Research Agent] Fetching RSS via Agent-Reach: {url}")
         try:
-            import feedparser
-            feed = feedparser.parse(url)
-            entries = []
-            for e in feed.entries[:10]:
-                entries.append({
-                    "title": e.get("title", ""),
-                    "link": e.get("link", ""),
-                    "summary": e.get("summary", "")[:500]
-                })
-            formatted = []
-            for e in entries:
-                formatted.append(f"Title: {e['title']}\nLink: {e['link']}\nSummary: {e['summary']}")
-            return {
-                "type": "rss",
-                "title": feed.feed.get("title", ""),
-                "content": "\n\n---\n\n".join(formatted),
-                "entries": entries
-            }
+            content = self.rss_channel.read(url)
+            if content:
+                return {
+                    "type": "rss",
+                    "title": "",
+                    "content": content[:8000],
+                    "entries": []
+                }
         except Exception as e:
-            print(f"[Research Agent] feedparser error: {e}")
-            return None
+            log.info(f"[Research Agent] RSSChannel read failed for {url}: {e}")
+        return None
 
     def _safe_get(self, url, **kwargs):
         """Safe GET with timeout and error handling."""
@@ -186,7 +206,7 @@ class ResearchAgent:
             if resp.status_code == 200:
                 return resp
         except Exception as e:
-            print(f"[Research Agent] Request failed for {url}: {e}")
+            log.info(f"[Research Agent] Request failed for {url}: {e}")
         return None
 
     def _extract_github_info(self, url):
@@ -204,29 +224,80 @@ class ResearchAgent:
         return None, None
 
     def _fetch_github_repo(self, owner, repo):
-        """Fetch GitHub repo metadata."""
-        api_url = f"https://api.github.com/repos/{owner}/{repo}"
-        resp = self._safe_get(api_url)
-        if resp:
-            return resp.json()
+        """Fetch GitHub repo metadata using Agent-Reach GitHubChannel."""
+        log.info(f"[Research Agent] Fetching GitHub repo via Agent-Reach: {owner}/{repo}")
+        repo_info = self.github_channel.get_repo_info(owner, repo)
+        if repo_info:
+            return {
+                "type": "github",
+                "title": repo_info.get("name", repo),
+                "content": repo_info.get("description", "")[:3000],
+                "url": repo_info.get("url", ""),
+                "stars": repo_info.get("stargazerCount", 0),
+                "language": repo_info.get("primaryLanguage", {}).get("name", "") if repo_info.get("primaryLanguage") else ""
+            }
         return None
 
     def _fetch_github_readme(self, owner, repo):
-        """Fetch README content."""
-        paths = ["README.md", "README.rst", "README.txt", "readme.md"]
-        for path in paths:
-            api_url = f"https://api.github.com/repos/{owner}/{repo}/contents/{path}"
-            resp = self._safe_get(api_url, headers={"Accept": "application/vnd.github.v3.raw"})
-            if resp and resp.text:
-                return resp.text
+        """Fetch README content using Agent-Reach GitHubChannel or API fallback."""
+        log.info(f"[Research Agent] Fetching GitHub README: {owner}/{repo}")
+        
+        # Try Agent-Reach channel first
+        try:
+            if hasattr(self.github_channel, 'get_readme'):
+                readme = self.github_channel.get_readme(owner, repo)
+                if readme:
+                    return readme
+        except Exception as e:
+            log.info(f"[Research Agent] Agent-Reach get_readme failed: {e}")
+        
+        # Fallback to direct GitHub API
+        import requests
+        headers = {"Accept": "application/vnd.github+json"}
+        github_token = self.config.get("github", {}).get("api_key") or self.config.get("github", {}).get("token") or self.config.get("GITHUB_TOKEN")
+        if github_token:
+            headers["Authorization"] = f"Bearer {github_token}"
+        
+        try:
+            r = requests.get(f"https://api.github.com/repos/{owner}/{repo}/readme", headers=headers, timeout=15)
+            if r.status_code == 200:
+                import base64
+                readme_data = r.json()
+                return base64.b64decode(readme_data.get("content", "")).decode("utf-8", errors="ignore")
+        except Exception as e:
+            log.info(f"[Research Agent] GitHub API readme fetch error: {e}")
+        
         return None
 
     def _fetch_github_contents(self, owner, repo, path=""):
-        """Fetch directory contents."""
-        api_url = f"https://api.github.com/repos/{owner}/{repo}/contents/{path}"
-        resp = self._safe_get(api_url)
-        if resp:
-            return resp.json()
+        """Fetch directory contents using Agent-Reach GitHubChannel or API fallback."""
+        log.info(f"[Research Agent] Fetching GitHub contents: {owner}/{repo}/{path}")
+        
+        # Try Agent-Reach channel first
+        try:
+            if hasattr(self.github_channel, 'get_contents'):
+                contents = self.github_channel.get_contents(owner, repo, path)
+                if contents:
+                    return contents
+        except Exception as e:
+            log.info(f"[Research Agent] Agent-Reach get_contents failed: {e}")
+        
+        # Fallback to direct GitHub API
+        import requests
+        headers = {"Accept": "application/vnd.github+json"}
+        github_token = self.config.get("github", {}).get("api_key") or self.config.get("github", {}).get("token") or self.config.get("GITHUB_TOKEN")
+        if github_token:
+            headers["Authorization"] = f"Bearer {github_token}"
+        
+        try:
+            api_path = path.strip("/") if path else ""
+            url = f"https://api.github.com/repos/{owner}/{repo}/contents/{api_path}" if api_path else f"https://api.github.com/repos/{owner}/{repo}/contents"
+            r = requests.get(url, headers=headers, timeout=15)
+            if r.status_code == 200:
+                return r.json()
+        except Exception as e:
+            log.info(f"[Research Agent] GitHub API contents fetch error: {e}")
+        
         return None
 
     def _fetch_key_files(self, owner, repo, max_files=8):
@@ -273,27 +344,69 @@ class ResearchAgent:
         return file_contents
 
     def _fetch_gh_repo(self, owner, repo):
-        """Fetch GitHub repo using gh CLI."""
-        print(f"[Research Agent] Fetching GitHub repo via gh CLI: {owner}/{repo}")
-        cmd = ["gh", "repo", "view", f"{owner}/{repo}", "--json", "name,description,url,stargazerCount,primaryLanguage"]
-        result = self._run_cmd(cmd, timeout=30, parse_json=True)
-        if result:
-            # Fetch README via gh api
-            readme_cmd = ["gh", "api", f"repos/{owner}/{repo}/readme"]
-            readme_result = self._run_cmd(readme_cmd, timeout=30, parse_json=True)
-            readme = ""
-            if readme_result and readme_result.get("content"):
-                import base64
-                readme = base64.b64decode(readme_result["content"]).decode("utf-8", errors="ignore")
+        """Fetch GitHub repo using GitHub API (fallback if Agent-Reach channel lacks methods)."""
+        log.info(f"[Research Agent] Fetching GitHub repo via API: {owner}/{repo}")
+        
+        # Try Agent-Reach channel first (if methods exist)
+        repo_info = None
+        readme = None
+        try:
+            if hasattr(self.github_channel, 'get_repo_info'):
+                repo_info = self.github_channel.get_repo_info(owner, repo)
+            if hasattr(self.github_channel, 'get_readme'):
+                readme = self.github_channel.get_readme(owner, repo)
+        except Exception as e:
+            log.info(f"[Research Agent] Agent-Reach GitHubChannel failed: {e}")
+        
+        # Fallback to direct GitHub API
+        if repo_info is None:
+            repo_info, readme = self._fetch_gh_repo_api(owner, repo)
+        
+        if repo_info:
             return {
                 "type": "github",
-                "title": result.get("name", ""),
-                "content": readme[:8000] or result.get("description", ""),
-                "url": result.get("url", ""),
-                "stars": result.get("stargazerCount", 0),
-                "language": result.get("primaryLanguage", {}).get("name", "") if result.get("primaryLanguage") else ""
+                "title": repo_info.get("name", repo),
+                "content": (readme or "")[:8000] or repo_info.get("description", ""),
+                "url": repo_info.get("html_url", ""),
+                "stars": repo_info.get("stargazers_count", 0),
+                "language": repo_info.get("language", "")
             }
         return None
+
+    def _fetch_gh_repo_api(self, owner, repo):
+        """Fetch GitHub repo info and README directly via GitHub REST API."""
+        import requests
+        headers = {"Accept": "application/vnd.github+json"}
+        github_token = self.config.get("github", {}).get("api_key") or self.config.get("github", {}).get("token") or self.config.get("GITHUB_TOKEN")
+        if github_token:
+            headers["Authorization"] = f"Bearer {github_token}"
+        
+        base_url = f"https://api.github.com/repos/{owner}/{repo}"
+        
+        # Get repo info
+        try:
+            r = requests.get(base_url, headers=headers, timeout=15)
+            if r.status_code == 200:
+                repo_info = r.json()
+            else:
+                log.info(f"[Research Agent] GitHub API repo fetch failed: {r.status_code}")
+                return None, None
+        except Exception as e:
+            log.info(f"[Research Agent] GitHub API repo fetch error: {e}")
+            return None, None
+        
+        # Get README
+        readme = ""
+        try:
+            r = requests.get(f"{base_url}/readme", headers=headers, timeout=15)
+            if r.status_code == 200:
+                import base64
+                readme_data = r.json()
+                readme = base64.b64decode(readme_data.get("content", "")).decode("utf-8", errors="ignore")
+        except Exception:
+            pass
+        
+        return repo_info, readme
 
     def _fetch_generic_url(self, url):
         """Fetch and extract content from generic URL using trafilatura if available."""
@@ -303,13 +416,11 @@ class ResearchAgent:
             if downloaded:
                 extracted = trafilatura.extract(downloaded, include_comments=False, include_tables=False)
                 if extracted:
-                    meta = trafilatura.extract_metadata(downloaded)
-                    title = meta.title if meta else ""
-                    return {"type": "article", "content": extracted[:8000], "title": title}
+                    return {"type": "article", "content": extracted[:8000], "title": trafilatura.extract_metadata(downloaded).title if trafilatura.extract_metadata(downloaded) else ""}
         except ImportError:
             pass
         except Exception as e:
-            print(f"[Research Agent] Trafilatura failed: {e}")
+            log.info(f"[Research Agent] Trafilatura failed: {e}")
 
         resp = self._safe_get(url)
         if resp:
@@ -355,9 +466,14 @@ class ResearchAgent:
                 if lines[-1].startswith("```"):
                     lines = lines[:-1]
                 clean = "\n".join(lines).strip()
-            return json.loads(clean)
+            try:
+                return json.loads(clean)
+            except json.JSONDecodeError as decode_err:
+                log.info(f"[Research Agent] JSON parsing failed: {decode_err}")
+                log.info(f"[Research Agent] Raw LLM response on parse failure:\n{clean}")
+                raise
         except Exception as e:
-            print(f"[Research Agent] LLM summarization failed: {e}")
+            log.info(f"[Research Agent] LLM summarization failed: {e}")
             return None
 
     def run(self, inputs):
@@ -366,29 +482,31 @@ class ResearchAgent:
         run_dir = inputs.get("run_dir")
         workspace_dir = inputs.get("workspace_dir")
 
-        url_match = re.match(r"^https?://", topic_seed)
-        if not url_match:
-            return {
-                "source_url": "",
-                "project_name": "",
-                "one_liner": "",
-                "tech_stack": [],
-                "key_features": [],
-                "innovation_hooks": [],
-                "demo_ideas": [],
-                "code_snippets": [],
-                "architecture_notes": "",
-                "readme_summary": "",
-                "is_url_source": False
-            }
-
-        print(f"[Research Agent] Analyzing URL: {topic_seed}")
-
-        parsed = urlparse(topic_seed)
-        hostname = parsed.netloc.lower()
+        # 1. Attempt to extract a URL or GitHub repo pattern
+        url_match = re.search(r"https?://[^\s]+", topic_seed)
+        if url_match:
+            topic_seed = url_match.group(0)
+            is_url = True
+        else:
+            # Check for GitHub owner/repo format in the seed
+            github_repo_match = re.search(
+                r"(?:^|\s)([a-zA-Z0-9-]{1,39})/([a-zA-Z0-9._-]{1,100})(?:\s|$| -)",
+                topic_seed
+            )
+            if github_repo_match:
+                owner, repo = github_repo_match.groups()
+                # Ignore common words or file-like patterns
+                if repo.lower() not in ("and", "or", "with", "for", "the", "a", "an") and not repo.endswith(('.py', '.js', '.ts', '.html', '.css', '.txt', '.md', '.png', '.jpg', '.jpeg', '.gif')):
+                    topic_seed = f"https://github.com/{owner}/{repo}"
+                    log.info(f"[Research Agent] Found GitHub repo in topic seed, converted to URL: {topic_seed}")
+                    is_url = True
+                else:
+                    is_url = False
+            else:
+                is_url = False
 
         research_data = {
-            "source_url": topic_seed,
+            "source_url": topic_seed if is_url else "",
             "project_name": "",
             "one_liner": "",
             "tech_stack": [],
@@ -398,8 +516,31 @@ class ResearchAgent:
             "code_snippets": [],
             "architecture_notes": "",
             "readme_summary": "",
-            "is_url_source": True
+            "is_url_source": is_url
         }
+
+        if not is_url:
+            # 2. Web Search Fallback using Exa
+            log.info(f"[Research Agent] Query is not a URL/GitHub repo. Performing web search: {topic_seed}")
+            search_result = self._search_exa(topic_seed)
+            if search_result and search_result.get("content"):
+                llm_result = self._summarize_with_llm(
+                    "search", f"Web Search: {topic_seed}", search_result["content"], topic_seed
+                )
+                if llm_result:
+                    research_data.update(llm_result)
+
+                    if run_dir:
+                        research_path = os.path.join(run_dir, "research.json")
+                        with open(research_path, "w", encoding="utf-8") as f:
+                            json.dump(research_data, f, indent=2)
+                        log.info(f"[Research Agent] Saved research to {research_path}")
+            return research_data
+
+        log.info(f"[Research Agent] Analyzing URL: {topic_seed}")
+
+        parsed = urlparse(topic_seed)
+        hostname = parsed.netloc.lower()
 
         # YouTube - use yt-dlp for transcript extraction
         if "youtube.com" in hostname or "youtu.be" in hostname:
@@ -419,7 +560,7 @@ class ResearchAgent:
         elif "github.com" in hostname:
             owner, repo = self._extract_github_info(topic_seed)
             if owner and repo:
-                print(f"[Research Agent] Fetching GitHub repo: {owner}/{repo}")
+                log.info(f"[Research Agent] Fetching GitHub repo: {owner}/{repo}")
                 # Try gh CLI
                 gh_result = self._fetch_gh_repo(owner, repo)
                 if gh_result:
@@ -449,11 +590,11 @@ class ResearchAgent:
                     if llm_result:
                         research_data.update(llm_result)
             else:
-                print("[Research Agent] Could not parse GitHub URL")
+                log.info("[Research Agent] Could not parse GitHub URL")
 
         # HuggingFace
         elif "huggingface.co" in hostname or "hf.co" in hostname:
-            print(f"[Research Agent] Fetching HuggingFace resource: {topic_seed}")
+            log.info(f"[Research Agent] Fetching HuggingFace resource: {topic_seed}")
             api_url = topic_seed.replace("https://huggingface.co", "https://huggingface.co/api")
             if not api_url.endswith("/"):
                 api_url += "/"
@@ -471,9 +612,46 @@ class ResearchAgent:
             if llm_result:
                 research_data.update(llm_result)
 
+        # Twitter/X
+        elif self.twitter_channel.can_handle(topic_seed):
+            log.info(f"[Research Agent] Fetching Twitter/X content via Agent-Reach: {topic_seed}")
+            # Determine if it's a tweet or an article
+            if "/status/" in topic_seed:
+                tweet_info = self.twitter_channel.tweet(topic_seed)
+                if tweet_info:
+                    research_data["project_name"] = f'Tweet by {tweet_info.get("author", "")}'
+                    research_data["readme_summary"] = tweet_info.get("text", "")[:3000]
+                    llm_result = self._summarize_with_llm(
+                        "twitter_tweet", research_data["project_name"], tweet_info.get("text", ""), topic_seed
+                    )
+                    if llm_result:
+                        research_data.update(llm_result)
+            elif "/i/events/" in topic_seed or "/read/" in topic_seed:
+                article_info = self.twitter_channel.article(topic_seed)
+                if article_info:
+                    research_data["project_name"] = article_info.get("title", "X Article")
+                    research_data["readme_summary"] = article_info.get("text", "")[:3000]
+                    llm_result = self._summarize_with_llm(
+                        "twitter_article", research_data["project_name"], article_info.get("text", ""), topic_seed
+                    )
+                    if llm_result:
+                        research_data.update(llm_result)
+            else:
+                log.info(f"[Research Agent] Unhandled Twitter/X URL type: {topic_seed}. Falling back to generic web fetch.")
+                # Fallback to generic web fetch for other Twitter URLs (profiles, searches)
+                result = self._fetch_web_article(topic_seed)
+                if result:
+                    research_data["project_name"] = result.get("title", "Twitter/X Page")
+                    research_data["readme_summary"] = result.get("content", "")[:3000]
+                    llm_result = self._summarize_with_llm(
+                        "webpage", research_data["project_name"], result.get("content", ""), topic_seed
+                    )
+                    if llm_result:
+                        research_data.update(llm_result)
+
         # arXiv
         elif "arxiv.org" in hostname:
-            print(f"[Research Agent] Fetching arXiv paper: {topic_seed}")
+            log.info(f"[Research Agent] Fetching arXiv paper: {topic_seed}")
             arxiv_id_match = re.search(r"(\d{4}\.\d{4,5}(?:v\d+)?)", topic_seed)
             abstract = ""
             if arxiv_id_match:
@@ -499,13 +677,51 @@ class ResearchAgent:
             if llm_result:
                 research_data.update(llm_result)
 
+        # Reddit
+        elif self.reddit_channel.can_handle(topic_seed):
+            log.info(f"[Research Agent] Fetching Reddit content via Agent-Reach: {topic_seed}")
+            # Determine if it's a post or a subreddit
+            if "/comments/" in topic_seed:
+                post_info = self.reddit_channel.read(topic_seed)
+                if post_info:
+                    research_data["project_name"] = post_info.get("title", "Reddit Post")
+                    research_data["readme_summary"] = post_info.get("text", "")[:3000]
+                    llm_result = self._summarize_with_llm(
+                        "reddit_post", research_data["project_name"], post_info.get("text", ""), topic_seed
+                    )
+                    if llm_result:
+                        research_data.update(llm_result)
+            elif "/r/" in topic_seed:
+                subreddit_name = topic_seed.split("/r/")[1].split("/")[0]
+                subreddit_info = self.reddit_channel.subreddit(subreddit_name)
+                if subreddit_info:
+                    research_data["project_name"] = subreddit_info.get("title", f"r/{subreddit_name}")
+                    research_data["readme_summary"] = subreddit_info.get("description", "")[:3000]
+                    llm_result = self._summarize_with_llm(
+                        "reddit_subreddit", research_data["project_name"], subreddit_info.get("description", ""), topic_seed
+                    )
+                    if llm_result:
+                        research_data.update(llm_result)
+            else:
+                log.info(f"[Research Agent] Unhandled Reddit URL type: {topic_seed}. Falling back to generic web fetch.")
+                # Fallback to generic web fetch for other Reddit URLs
+                result = self._fetch_web_article(topic_seed)
+                if result:
+                    research_data["project_name"] = result.get("title", "Reddit Page")
+                    research_data["readme_summary"] = result.get("content", "")[:3000]
+                    llm_result = self._summarize_with_llm(
+                        "webpage", research_data["project_name"], result.get("content", ""), topic_seed
+                    )
+                    if llm_result:
+                        research_data.update(llm_result)
+
         # Generic web URL - use Jina Reader first, fallback to trafilatura/BS4
         else:
             result = self._fetch_web_article(topic_seed)
             if not result:
-                print(f"[Research Agent] Jina Reader failed, falling back to trafilatura/BS4: {topic_seed}")
+                log.info(f"[Research Agent] Jina Reader failed, falling back to trafilatura/BS4: {topic_seed}")
                 result = self._fetch_generic_url(topic_seed)
-            
+
             if result:
                 research_data["project_name"] = result.get("title", "Web Resource")
                 research_data["readme_summary"] = result.get("content", "")[:3000]
@@ -520,7 +736,7 @@ class ResearchAgent:
             research_path = os.path.join(run_dir, "research.json")
             with open(research_path, "w", encoding="utf-8") as f:
                 json.dump(research_data, f, indent=2)
-            print(f"[Research Agent] Saved research to {research_path}")
+            log.info(f"[Research Agent] Saved research to {research_path}")
 
         return research_data
 
@@ -532,3 +748,4 @@ def research_url(config, url, run_dir=None, workspace_dir=None):
         "run_dir": run_dir,
         "workspace_dir": workspace_dir
     })
+

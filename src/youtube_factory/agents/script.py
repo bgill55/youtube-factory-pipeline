@@ -1,16 +1,12 @@
+from youtube_factory.logging_utils import get_logger
+
+log = get_logger("agent_script")
 import os
 import json
 import re
-import random
-from pipeline.llm_utils import query_llm as _query_llm
-from pipeline.prompts import get_system_prompt
+from youtube_factory.llm import query_llm as _query_llm
+from youtube_factory.prompts import get_system_prompt
 
-def _safe_print(msg):
-    """Print that handles non-encodable characters on Windows cp1252 console or detached stdout."""
-    try:
-        print(msg.encode("cp1252", errors="replace").decode("cp1252"))
-    except Exception:
-        pass
 
 class ScriptwriterAgent:
     ANALOGY_THEMES = [
@@ -84,7 +80,7 @@ class ScriptwriterAgent:
             script_markdown = topic_seed
 
         if script_markdown:
-            _safe_print("[Scriptwriter] Custom script detected — bypassing LLM script generation.")
+            log.info("[Scriptwriter] Custom script detected — bypassing LLM script generation.")
             safe_topic = re.sub(r'[^a-zA-Z0-9]', '_', selected_topic).strip('_').lower()
             safe_topic = safe_topic[:30]
             script_file_name = f"script_{safe_topic}.md"
@@ -132,33 +128,12 @@ class ScriptwriterAgent:
                     scraped_parts.append(body)
                 scraped_source_material = "\n".join(scraped_parts)
 
-        # Salt Injection — generate a FRESH analogy for this specific topic
-        try:
-            example_analogies = "\n".join(f"- {t}" for t in random.sample(self.ANALOGY_THEMES, min(5, len(self.ANALOGY_THEMES))))
-            salt_prompt = (
-                f"Video topic: {selected_topic}\n"
-                f"Concept: {concept_summary[:200]}\n\n"
-                f"Generate ONE completely fresh, unexpected analogy to explain this topic to a non-technical audience. "
-                f"The analogy must be:\n"
-                f"- Something MOST people have experienced or can visualize\n"
-                f"- Unexpected and specific (not generic like 'cooking' or 'building')\n"
-                f"- Capable of mapping to multiple aspects of the topic (input→output, scaling, bottlenecks, etc.)\n"
-                f"- Different from these examples (which have been overused): {example_analogies}\n\n"
-                f"Return ONLY the analogy as a single sentence. No quotes, no explanation.\n"
-                f"Example good output: 'a postal worker sorting letters during a holiday rush'"
-            )
-            selected_theme = self.query_llm("Generate a fresh analogy.", salt_prompt).strip().strip('"').strip("'")
-            if len(selected_theme) < 10:
-                selected_theme = random.choice(self.ANALOGY_THEMES)
-        except Exception:
-            selected_theme = random.choice(self.ANALOGY_THEMES)
-        safe_theme = selected_theme.encode("cp1252", errors="replace").decode("cp1252")
-        _safe_print(f"[Scriptwriter] Salt Injection: Injecting analogy theme -> '{safe_theme}'")
-        
+        # Strict Analogy Ban - We do not use analogies for bleeding-edge technical videos
         analogy_theme_instruction = (
-            f"CRITICAL CREATIVE CONSTRAINT: You are strictly forbidden from using generic clichés (such as 'chefs in a kitchen', 'orchestrating an orchestra', 'building blocks', or 'assembling a puzzle'). "
-            f"Instead, you MUST explain the core technical concepts of the model/tool using the following fresh, creative analogy theme: '{selected_theme}'. "
-            f"Ground your explanation in this theme, weaving it throughout the script to make the complex technology feel tangible and uniquely memorable."
+            "ANALOGY BAN (NON-NEGOTIABLE): You are strictly forbidden from using any analogies, metaphors, or storytelling comparisons "
+            "(such as florists, honeybees, baking/cooking, sports, clockwork, typewriters, or arcade machines) to explain the technology. "
+            "Instead, explain the core technical concepts directly using developer terms, concrete specifications, configurations, "
+            "and real-world developer workflows. Do NOT write 'It's like' or 'Think of it as'. Keep the script 100% focused on technical reality."
         )
 
         # Build system prompt from centralized registry with dynamic data injection
@@ -197,7 +172,7 @@ class ScriptwriterAgent:
             )
             for claim in claims:
                 if claim.strip() not in source_text:
-                    print(f"[Scriptwriter] WARNING: Script mentions '{claim}' but it's not in source material — may be hallucinated")
+                    log.info(f"[Scriptwriter] WARNING: Script mentions '{claim}' but it's not in source material — may be hallucinated")
                     unverified_claims.append(claim)
 
         # LLM-powered claim verification: check each factual statement against sources
@@ -223,9 +198,9 @@ Output JSON: {{"results": [{{"claim": "...", "status": "VERIFIED" or "UNVERIFIED
                 verify_data = json.loads(verify_result.strip().strip('`').replace('```json', '').replace('```', ''))
                 for item in verify_data.get("results", []):
                     if item.get("status") == "UNVERIFIED":
-                        print(f"[Scriptwriter] UNVERIFIED CLAIM: '{item.get('claim')}' — {item.get('reason', 'Not found in source')}")
+                        log.info(f"[Scriptwriter] UNVERIFIED CLAIM: '{item.get('claim')}' — {item.get('reason', 'Not found in source')}")
             except Exception as e:
-                print(f"[Scriptwriter] Claim verification failed: {e}")
+                log.info(f"[Scriptwriter] Claim verification failed: {e}")
 
         # Add source citations footer to script
         citations = []
@@ -252,3 +227,4 @@ Output JSON: {{"results": [{{"claim": "...", "status": "VERIFIED" or "UNVERIFIED
             "script_file": script_file_path,
             "script_text": script_markdown
         }
+

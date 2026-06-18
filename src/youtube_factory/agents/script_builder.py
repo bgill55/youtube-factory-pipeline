@@ -3,12 +3,16 @@ ScriptBuilderAgent - Builds a complete pipeline-ready script from VideoAnalysis 
 Maps user's screen recording segments to scenes, generates missing narration,
 and creates the full script structure for the video pipeline.
 """
+from youtube_factory.logging_utils import get_logger
+
+log = get_logger("agent_script_builder")
+
 
 import os
 import json
 from typing import List, Dict, Any, Optional
 from datetime import datetime
-from pipeline.llm_utils import query_llm as _query_llm
+from youtube_factory.llm import query_llm as _query_llm
 
 
 class ScriptBuilderAgent:
@@ -38,12 +42,12 @@ class ScriptBuilderAgent:
         topic = seed_topic or video_analysis.get("seed_topic", "Tech Video")
         video_duration = video_analysis.get("total_duration", 0)
         
-        print(f"[ScriptBuilder] Building script for: {topic}")
-        print(f"[ScriptBuilder] {len(segments)} asset segments, {video_duration:.1f}s total")
+        log.info(f"[ScriptBuilder] Building script for: {topic}")
+        log.info(f"[ScriptBuilder] {len(segments)} asset segments, {video_duration:.1f}s total")
         
         # Group consecutive segments of same type
         grouped = self._group_segments(segments)
-        print(f"[ScriptBuilder] Grouped into {len(grouped)} scene groups")
+        log.info(f"[ScriptBuilder] Grouped into {len(grouped)} scene groups")
         
         # Build scenes: intro + asset groups + bridges + outro
         scenes = []
@@ -95,12 +99,12 @@ class ScriptBuilderAgent:
             "seed_topic": topic
         }
         
-        print(f"[ScriptBuilder] Built {len(scenes)} scenes, {total_duration:.1f}s total ({asset_duration:.1f}s asset + {generated_duration:.1f}s generated)")
+        log.info(f"[ScriptBuilder] Built {len(scenes)} scenes, {total_duration:.1f}s total ({asset_duration:.1f}s asset + {generated_duration:.1f}s generated)")
         return result
 
     def _generate_narration_with_llm(self, scenes: List[Dict], topic: str) -> None:
         """Query the LLM to generate high-quality continuous narration matching scene durations."""
-        print(f"[ScriptBuilder] Querying LLM for high-quality narration matching scene durations...")
+        log.info(f"[ScriptBuilder] Querying LLM for high-quality narration matching scene durations...")
         
         # Prepare scene descriptions for the prompt
         scene_list = []
@@ -179,7 +183,7 @@ class ScriptBuilderAgent:
                 idx = s["index"]
                 if idx in narrations and narrations[idx]:
                     s["narration"] = narrations[idx]
-            print("[ScriptBuilder] Successfully generated and applied LLM narration for all scenes!")
+            log.info("[ScriptBuilder] Successfully generated and applied LLM narration for all scenes!")
         except Exception as e:
             import sys
             raw_res = locals().get('res', 'None')
@@ -187,10 +191,10 @@ class ScriptBuilderAgent:
                 enc_res = raw_res.encode(sys.stdout.encoding or "utf-8", errors="replace").decode(sys.stdout.encoding or "utf-8", errors="replace")
             except Exception:
                 enc_res = "[Unencodable Response]"
-            print(f"[ScriptBuilder] LLM narration query failed: {e}. Raw response: {enc_res}")
+            log.info(f"[ScriptBuilder] LLM narration query failed: {e}. Raw response: {enc_res}")
             import traceback
             traceback.print_exc()
-            print(f"[ScriptBuilder] Falling back to programmatic templates.")
+            log.info(f"[ScriptBuilder] Falling back to programmatic templates.")
     
     def _group_segments(self, segments: List[Dict]) -> List[List[Dict]]:
         """
@@ -428,7 +432,7 @@ def build_script_from_analysis(video_analysis_path: str, output_path: str = None
     if output_path:
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(result, f, indent=2, ensure_ascii=False)
-        print(f"[ScriptBuilder] Saved to: {output_path}")
+        log.info(f"[ScriptBuilder] Saved to: {output_path}")
     
     return result
 
