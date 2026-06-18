@@ -1,121 +1,132 @@
 {
-  "audio_settings": {
-    "bg_music_volume": 0.15,
-    "ducking_threshold": 0.09,
-    "ducking_ratio": 4,
-    "ducking_attack": 200,
-    "ducking_release": 800
-  },
-  "bg_music": "stable_audio_3",
-  "cerebras": {
-    "api_key": "${CEREBRAS_API_KEY}",
-    "model_name": "gpt-oss-120b"
-  },
-  "channel": {
-    "handle": "@WeightnSee",
-    "channel_id": "UCXfOLuabjyxrPN0XP3OHpIg",
-    "name": "Weight and See",
-    "niche": "AI breakthroughs, local AI, GPU tech, automation, productivity, and big-future science \u2014 explained for real people.",
-    "tagline": "Your signal through the noise of AI."
-  },
-  "elevenlabs": {
-    "api_key": "${ELEVENLABS_API_KEY}",
-    "voice_id": "21m00Tcm4TlvDq8ikWAM"
-  },
-  "fal_api_key": "",
-  "freellmapi": {
-    "api_key": "freellmapi-da50ac6bb1bc19a11007076a563c9a23627eed3d93d73f3c",
-    "base_url": "http://localhost:3001/v1",
-    "timeout": 120
-  },
-  "gemini": {
-    "api_key": "${GEMINI_API_KEY}",
-    "image_model": "gemini-3.1-flash-image",
-    "text_model": "gemini-3.5-flash",
-    "voice_model": "gemini-3.1-flash-tts-preview"
-  },
-  "github": {
-    "api_key": "${GITHUB_TOKEN}"
-  },
-  "groq": {
-    "api_key": "${GROQ_API_KEY}",
-    "model_name": "llama-3.3-70b-versatile"
-  },
-  "image_provider": "static_bg",
-  "lm_studio": {
-    "base_url": "http://localhost:1234/v1",
-    "model_name": "google/gemma-4-e4b"
-  },
-  "local_sd": {
-    "base_url": "http://127.0.0.1:7860",
-    "steps": 25,
-    "cfg_scale": 7,
-    "lora_url": "https://storage.googleapis.com/voxvivid-assets/sacred_truth_v1.safetensors",
-    "lora_strength": 0.8,
-    "lora_trigger": "sacred truth"
-  },
-  "static_background_dir": "D:/Youtube_Factory/assets/thumbnails",
-  "omnivoice": {
-    "base_url": "http://localhost:3900/v1",
-    "voice_id": "brian_ref",
-    "model_name": "omnivoice",
-    "language": "en",
-    "speed": 1,
-    "path": "D:/OmniVoice-Studio"
-  },
-  "supertonic": {
-    "base_url": "http://127.0.0.1:7788",
-    "voice_name": "M4",
-    "total_steps": 8,
-    "speed": 1.05,
-    "voice_volume": 2.5
-  },
-  "pexels_api_key": "c7u6mwVjtnuNWXlpvhBGrwTmbjh8epizB46asP2SHCWTZ6UF3AonEYm9",
-  "scheduler": {
-    "audience": "Tech enthusiasts, developers, and builders who want hands-on, practical AI tutorials and honest tech analysis without the marketing hype.",
-    "cron": "0 7 * * 1,3,5",
-    "enabled": true,
-    "next_run": "2026-06-17T07:00:00",
-    "seed": "trending"
-  },
-  "text_provider": "freellmapi",
-  "upload_settings": {
-    "privacy_status": "private",
-    "generate_shorts": true
-  },
-  "video_settings": {
-    "width": 1920,
-    "height": 1080,
-    "aspect_ratio": "16:9",
-    "subtitle_delay": 0
-  },
-  "video_providers": {
-    "veo": {
-      "enabled": true,
-      "model": "veo-3.1-generate-preview"
+    "audio_settings": {
+        "bg_music_volume": 0.15,
+        "ducking_threshold": 0.09,
+        "ducking_ratio": 4,
+        "ducking_attack": 200,
+        "ducking_release": 800
     },
-    "kling": {
-      "enabled": true,
-      "api_key": "AHknrgPDhhhMatMDThyBgGLbPp3JeJA9",
-      "api_secret": "GgGERCABA9LdPKMbeJg83FKMyYPE4mmG",
-      "base_url": "https://api.klingai.com",
-      "model": "kling-v2"
-    }
-  },
-  "voice_fallback": {
-    "tts_voice": "en-US-GuyNeural"
-  },
-  "voice_provider": "supertonic_http",
-  "zai": {
-    "api_key": "${ZAI_API_KEY}",
-    "model_name": "glm-4-plus"
-  },
-  "guide_deploy": {
-    "enabled": true,
-    "repo_name": "-weightandsee-guides",
-    "branch": "Master",
-    "username": "bgill55",
-    "guides_dir": "guides"
-  },
-  "tesseract_cmd": "C:\\Program Files\\Tesseract-OCR\\tesseract.exe"
+    "bg_music": "stable_audio_3",
+    "cerebras": {
+        "api_key": "${CEREBRAS_API_KEY}",
+        "model_name": "gpt-oss-120b"
+    },
+    "channel": {
+        "handle": "@WeightnSee",
+        "channel_id": "UCXfOLuabjyxrPN0XP3OHpIg",
+        "name": "Weight and See",
+        "niche": "AI breakthroughs, local AI, GPU tech, automation, productivity, and big-future science \u2014 explained for real people.",
+        "tagline": "Your signal through the noise of AI."
+    },
+    "elevenlabs": {
+        "api_key": "${ELEVENLABS_API_KEY}",
+        "voice_id": "21m00Tcm4TlvDq8ikWAM"
+    },
+    "fal_api_key": "",
+    "freellmapi": {
+        "api_key": "${FREELLAPI_KEY}",
+        "base_url": "http://localhost:3001/v1",
+        "timeout": 180,
+        "max_retries": 2
+    },
+    "gemini": {
+        "api_key": "${GEMINI_API_KEY}",
+        "image_model": "gemini-3.1-flash-image",
+        "text_model": "gemini-3.5-flash",
+        "voice_model": "gemini-3.1-flash-tts-preview"
+    },
+    "github": {
+        "api_key": "${GITHUB_TOKEN}"
+    },
+    "groq": {
+        "api_key": "${GROQ_API_KEY}",
+        "model_name": "llama-3.3-70b-versatile"
+    },
+    "image_provider": "static_bg",
+    "lm_studio": {
+        "base_url": "http://localhost:1234/v1",
+        "model_name": "google/gemma-4-e4b"
+    },
+    "local_sd": {
+        "base_url": "http://127.0.0.1:7860",
+        "steps": 25,
+        "cfg_scale": 7,
+        "lora_url": "https://storage.googleapis.com/voxvivid-assets/sacred_truth_v1.safetensors",
+        "lora_strength": 0.8,
+        "lora_trigger": "sacred truth"
+    },
+    "static_background_dir": "D:/Youtube_Factory/assets/thumbnails",
+    "omnivoice": {
+        "base_url": "http://localhost:3900/v1",
+        "voice_id": "brian_ref",
+        "model_name": "omnivoice",
+        "language": "en",
+        "speed": 1,
+        "path": "D:/OmniVoice-Studio"
+    },
+    "supertonic": {
+        "base_url": "http://127.0.0.1:3900/v1",
+        "voice_name": "M4",
+        "total_steps": 8,
+        "speed": 1.05,
+        "voice_volume": 3.5,
+        "model": "omnivoice",
+        "seed": 42
+    },
+    "pexels_api_key": "${PEXELS_API_KEY}",
+    "scheduler": {
+        "audience": "Tech enthusiasts, developers, and builders who want hands-on, practical AI tutorials and honest tech analysis without the marketing hype.",
+        "cron": "0 7 * * 1,3,5",
+        "enabled": true,
+        "next_run": "2026-06-19T07:00:00",
+        "seed": "trending"
+    },
+    "text_provider": "freellmapi",
+    "upload_settings": {
+        "privacy_status": "private",
+        "generate_shorts": true
+    },
+    "video_settings": {
+        "width": 1920,
+        "height": 1080,
+        "aspect_ratio": "16:9",
+        "subtitle_delay": 0
+    },
+    "video_providers": {
+        "veo": {
+            "enabled": true,
+            "model": "veo-3.1-generate-preview"
+        },
+        "kling": {
+            "enabled": true,
+            "api_key": "${KLING_API_KEY}",
+            "api_secret": "${KLING_API_SECRET}",
+            "base_url": "https://api.klingai.com",
+            "model": "kling-v2"
+        }
+    },
+    "voice_fallback": {
+        "tts_voice": "en-US-GuyNeural"
+    },
+    "voice_provider": "supertonic_http",
+    "zai": {
+        "api_key": "${ZAI_API_KEY}",
+        "model_name": "glm-4-plus"
+    },
+    "guide_deploy": {
+        "enabled": true,
+        "repo_name": "-weightandsee-guides",
+        "branch": "Master",
+        "username": "bgill55",
+        "guides_dir": "guides"
+    },
+    "tesseract_cmd": "C:\\Program Files\\Tesseract-OCR\\tesseract.exe",
+    "keyframe_crop": [
+        0.0,
+        0.05,
+        1.0,
+        0.9
+    ],
+    "shorts_crop_anchor": "top",
+    "shorts_ken_burns": false
 }

@@ -2,6 +2,10 @@
 VideoAnalysisAgent - Analyzes screen recordings to extract segments, 
 transcripts, and visual context for Asset-First video pipeline.
 """
+from pipeline.logging_utils import get_logger
+
+log = get_logger("agent_video_analysis")
+
 
 import os
 import json
@@ -22,7 +26,12 @@ class VideoAnalysisAgent:
         self.scene_threshold = self.config.get("scene_threshold", 0.3)
         self.min_segment_duration = self.config.get("min_segment_duration", 2.0)
         self.max_segment_duration = self.config.get("max_segment_duration", 60.0)
-        
+
+        # Keyframe cropping - for screen recordings where browser isn't fullscreen
+        # Set to null to disable, or specify crop region as [x, y, width, height] in pixels
+        # or as fractions of frame [x_ratio, y_ratio, width_ratio, height_ratio]
+        self.keyframe_crop = self.config.get("keyframe_crop", None)
+
         # Tesseract OCR path - from config or common defaults
         self.tesseract_cmd = self.config.get(
             "tesseract_cmd",
@@ -38,7 +47,7 @@ class VideoAnalysisAgent:
         4. Align scenes with transcript
         5. Classify segments and generate metadata
         """
-        print(f"[VideoAnalysis] Analyzing: {video_path}")
+        log.info(f"[VideoAnalysis] Analyzing: {video_path}")
         
         if not os.path.exists(video_path):
             raise FileNotFoundError(f"Video not found: {video_path}")
@@ -46,19 +55,19 @@ class VideoAnalysisAgent:
         # Get video info
         video_info = self._get_video_info(video_path)
         duration = video_info["duration"]
-        print(f"[VideoAnalysis] Duration: {duration:.1f}s, {video_info['width']}x{video_info['height']} @ {video_info['fps']:.1f}fps")
+        log.info(f"[VideoAnalysis] Duration: {duration:.1f}s, {video_info['width']}x{video_info['height']} @ {video_info['fps']:.1f}fps")
         
         # Step 1: Scene detection
         scene_times = self._detect_scenes(video_path)
-        print(f"[VideoAnalysis] Detected {len(scene_times)-1} scenes")
+        log.info(f"[VideoAnalysis] Detected {len(scene_times)-1} scenes")
         
         # Step 2: Extract audio and transcribe
         transcript_segments = self._transcribe_audio(video_path)
-        print(f"[VideoAnalysis] Transcribed {len(transcript_segments)} segments")
+        log.info(f"[VideoAnalysis] Transcribed {len(transcript_segments)} segments")
         
         # Step 3: Build unified segments (align scenes + transcript)
         segments = self._build_segments(scene_times, transcript_segments, duration)
-        print(f"[VideoAnalysis] Built {len(segments)} unified segments")
+        log.info(f"[VideoAnalysis] Built {len(segments)} unified segments")
         
         # Step 4: Classify and enrich each segment
         enriched_segments = []
@@ -85,7 +94,7 @@ class VideoAnalysisAgent:
             output_path = os.path.join(run_dir, "video_analysis.json")
             with open(output_path, "w", encoding="utf-8") as f:
                 json.dump(result, f, indent=2, ensure_ascii=False)
-            print(f"[VideoAnalysis] Saved to: {output_path}")
+            log.info(f"[VideoAnalysis] Saved to: {output_path}")
         
         return result
     
@@ -189,11 +198,11 @@ class VideoAnalysisAgent:
             ]
             result = subprocess.run(cmd, capture_output=True, timeout=60)
             if result.returncode != 0:
-                print(f"[VideoAnalysis] Audio extraction failed: {result.stderr[:200]}")
+                log.info(f"[VideoAnalysis] Audio extraction failed: {result.stderr[:200]}")
                 return []
             
             # Transcribe with Whisper
-            print(f"[VideoAnalysis] Loading Whisper model ({self.whisper_model})...")
+            log.info(f"[VideoAnalysis] Loading Whisper model ({self.whisper_model})...")
             # Suppress Triton CUDA warnings from Whisper
             import warnings
             warnings.filterwarnings("ignore", message="Failed to launch Triton kernels")
@@ -202,7 +211,7 @@ class VideoAnalysisAgent:
             import os
             os.environ.setdefault("TRITON_CACHE_DIR", os.path.join(tempfile.gettempdir(), "triton_cache"))
             model = whisper.load_model(self.whisper_model)
-            print(f"[VideoAnalysis] Transcribing...")
+            log.info(f"[VideoAnalysis] Transcribing...")
             result = model.transcribe(audio_path, verbose=False, word_timestamps=True)
             
             segments = []
@@ -217,7 +226,7 @@ class VideoAnalysisAgent:
             return segments
             
         except Exception as e:
-            print(f"[VideoAnalysis] Transcription failed: {e}")
+            log.info(f"[VideoAnalysis] Transcription failed: {e}")
             return []
         finally:
             if os.path.exists(audio_path):
@@ -335,7 +344,7 @@ class VideoAnalysisAgent:
             if result.returncode == 0:
                 return result.stdout.strip()
         except Exception as e:
-            print(f"[VideoAnalysis] OCR failed: {e}")
+            log.info(f"[VideoAnalysis] OCR failed: {e}")
         return ""
 
     def _classify_action(self, transcript: str, ocr_text: str, duration: float) -> str:

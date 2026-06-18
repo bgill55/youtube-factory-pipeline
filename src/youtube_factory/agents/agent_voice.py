@@ -1,3 +1,6 @@
+from pipeline.logging_utils import get_logger
+
+log = get_logger("agent_voice")
 import os
 import json
 import re
@@ -102,7 +105,7 @@ class VoiceoverAgent:
                         f.write(subs)
                     return True
             except Exception as e:
-                print(f"[Voice Agent] SubMaker SRT generation failed: {e}")
+                log.info(f"[Voice Agent] SubMaker SRT generation failed: {e}")
         return False
 
     def generate_tts_omnivoice(self, text, output_file, srt_output_file=None):
@@ -163,7 +166,7 @@ class VoiceoverAgent:
                             srt_f.write("\n".join(srt_lines))
                         return True
             except Exception as e:
-                print(f"[Voice Agent] OmniVoice SRT alignment extraction failed: {e}")
+                log.info(f"[Voice Agent] OmniVoice SRT alignment extraction failed: {e}")
         return False
 
     def _format_seconds_to_srt(self, seconds):
@@ -226,20 +229,30 @@ class VoiceoverAgent:
         total_steps = st_config.get("total_steps", 8)
         speed = st_config.get("speed", 1.05)
 
-        url = f"{base_url}/v1/audio/speech"
+        model_name = st_config.get("model", "omnivoice")
+        
+        # Base URL may or may not include /v1 - handle both
+        if base_url.endswith("/v1"):
+            url = f"{base_url}/audio/speech"
+        else:
+            url = f"{base_url}/v1/audio/speech"
         headers = {"Content-Type": "application/json"}
         payload = {
-            "model": "supertonic-3",
+            "model": model_name,
             "input": text,
             "voice": voice_name,
             "response_format": "wav",
             "extra_body": {
                 "total_steps": total_steps,
-                "speed": speed
+                "speed": speed,
+                "seed": st_config.get("seed", 42)
             }
         }
 
-        response = requests.post(url, json=payload, headers=headers)
+        try:
+            response = requests.post(url, json=payload, headers=headers)
+        except requests.exceptions.RequestException as e:
+            raise Exception(f"Supertonic TTS request failed: {e}")
         if response.status_code != 200:
             raise Exception(f"Supertonic TTS failed with status {response.status_code}: {response.text}")
 
@@ -276,7 +289,7 @@ class VoiceoverAgent:
                             srt_f.write("\n".join(srt_lines))
                         return True
             except Exception as e:
-                print(f"[Voice Agent] Supertonic SRT alignment extraction failed: {e}, falling back to edge-tts")
+                log.info(f"[Voice Agent] Supertonic SRT alignment extraction failed: {e}, falling back to edge-tts")
                 return self.generate_tts_edgetts(text, output_file, srt_output_file=srt_output_file)
         return False
 
@@ -385,7 +398,7 @@ class VoiceoverAgent:
                     self.generate_tts_gemini(spoken_text, scene_audio_path)
                     provider = "gemini"
                 except Exception as e:
-                    print(f"[Voice Agent] Gemini TTS failed for scene {idx}, falling back to Edge TTS. Error: {e}")
+                    log.info(f"[Voice Agent] Gemini TTS failed for scene {idx}, falling back to Edge TTS. Error: {e}")
                     has_word_srt = self.generate_tts_edgetts(spoken_text, scene_audio_path, srt_output_file=scene_srt_path)
                     provider = "edge-tts"
             elif voice_provider == "elevenlabs":
@@ -393,7 +406,7 @@ class VoiceoverAgent:
                     self.generate_tts_elevenlabs(spoken_text, scene_audio_path)
                     provider = "elevenlabs"
                 except Exception as e:
-                    print(f"[Voice Agent] ElevenLabs TTS failed for scene {idx}, falling back to Edge TTS. Error: {e}")
+                    log.info(f"[Voice Agent] ElevenLabs TTS failed for scene {idx}, falling back to Edge TTS. Error: {e}")
                     has_word_srt = self.generate_tts_edgetts(spoken_text, scene_audio_path, srt_output_file=scene_srt_path)
                     provider = "edge-tts"
             elif voice_provider == "omnivoice":
@@ -401,7 +414,7 @@ class VoiceoverAgent:
                     has_word_srt = self.generate_tts_omnivoice(spoken_text, scene_audio_path, srt_output_file=scene_srt_path)
                     provider = "omnivoice"
                 except Exception as e:
-                    print(f"[Voice Agent] OmniVoice TTS failed for scene {idx}, falling back to Edge TTS. Error: {e}")
+                    log.info(f"[Voice Agent] OmniVoice TTS failed for scene {idx}, falling back to Edge TTS. Error: {e}")
                     has_word_srt = self.generate_tts_edgetts(spoken_text, scene_audio_path, srt_output_file=scene_srt_path)
                     provider = "edge-tts"
             elif voice_provider == "supertonic_http":
@@ -425,7 +438,7 @@ class VoiceoverAgent:
                         os.remove(temp_wav)
                     provider = "supertonic"
                 except Exception as e:
-                    print(f"[Voice Agent] Supertonic TTS failed for scene {idx}, falling back to Edge TTS. Error: {e}")
+                    log.info(f"[Voice Agent] Supertonic TTS failed for scene {idx}, falling back to Edge TTS. Error: {e}")
                     has_word_srt = self.generate_tts_edgetts(spoken_text, scene_audio_path, srt_output_file=scene_srt_path)
                     provider = "edge-tts"
             else:
