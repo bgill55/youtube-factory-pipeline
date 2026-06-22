@@ -124,6 +124,7 @@ class FreeLLMAPIClient:
         temperature: float = 0.7,
         max_tokens: int = None,
         response_format: str = None,  # "json" for JSON mode
+        response_schema: Dict = None,  # JSON schema for structured output
         stream: bool = False
     ) -> FreeLLMAPIResponse:
         """
@@ -137,6 +138,9 @@ class FreeLLMAPIClient:
             temperature: Sampling temperature
             max_tokens: Max completion tokens
             response_format: "json" for JSON mode
+            response_schema: JSON schema dict for structured output.
+                             When provided, enables json_schema mode if supported,
+                             otherwise falls back to json_object with schema in prompt.
             stream: Whether to stream the response
         
         Returns:
@@ -163,12 +167,23 @@ class FreeLLMAPIClient:
         if max_tokens:
             body["max_tokens"] = max_tokens
         
-        if response_format == "json":
+        if response_schema:
+            body["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "response",
+                    "strict": True,
+                    "schema": response_schema
+                }
+            }
+        elif response_format == "json":
             body["response_format"] = {"type": "json_object"}
         
         # Add context hints as extra parameters (FreeLLMAPI ignores unknown fields)
         if context:
-            body.update(context)
+            for k, v in context.items():
+                if k not in body:
+                    body[k] = v
         
         headers = {
             "Authorization": f"Bearer {self.api_key}",

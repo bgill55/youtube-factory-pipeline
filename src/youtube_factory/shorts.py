@@ -251,6 +251,84 @@ class ShortGenerator:
         s, e, d = self.fallback_scene_range(scenes)
         return s, e, "Selected programmatically to maximize duration under 55s."
 
+    def _concat_and_mix(self, short_temp_dir, scene_mp4_files, bg_music_file, run_dir, final_short_path):
+        """Concat scene MP4s and optionally mix BGM in a single ffmpeg pass."""
+        import shutil
+
+        if len(scene_mp4_files) == 1:
+            single_src = os.path.join(short_temp_dir, scene_mp4_files[0])
+            if not bg_music_file or not os.path.exists(bg_music_file):
+                shutil.copy(single_src, final_short_path)
+                return
+            temp_short_unmixed_path = os.path.join(run_dir, "final_short_temp.mp4")
+            shutil.copy(single_src, temp_short_unmixed_path)
+        else:
+            concat_list_path = os.path.join(short_temp_dir, "concat_list.txt")
+            with open(concat_list_path, "w", encoding="utf-8") as f:
+                for f_name in scene_mp4_files:
+                    f.write(f"file '{f_name}'\n")
+            temp_short_unmixed_name = "final_short_temp.mp4"
+            temp_short_unmixed_path = os.path.join(run_dir, temp_short_unmixed_name)
+            concat_cmd = [
+                "ffmpeg", "-y",
+                "-f", "concat",
+                "-safe", "0",
+                "-i", "concat_list.txt",
+                "-c", "copy",
+                f"../{temp_short_unmixed_name}"
+            ]
+            for attempt in range(3):
+                try:
+                    subprocess.run(concat_cmd, cwd=short_temp_dir, capture_output=True, text=True, check=True)
+                    break
+                except subprocess.CalledProcessError as e:
+                    if attempt == 2:
+                        raise
+                    log.info(f"[Short Generator] Concat attempt {attempt+1} failed, retrying: {e.stderr[:200]}")
+                    time.sleep(1)
+
+        if bg_music_file and os.path.exists(bg_music_file):
+            log.info("[Short Generator] Mixing BGM for Short...")
+            audio_settings = self.config.get("audio_settings", {})
+            bg_vol = audio_settings.get("bg_music_volume", 0.15) * 1.33
+            thresh = audio_settings.get("ducking_threshold", 0.10)
+            ratio = audio_settings.get("ducking_ratio", 4.0)
+            attack = audio_settings.get("ducking_attack", 200)
+            release = audio_settings.get("ducking_release", 800)
+            filter_complex = (
+                f"[1:a]volume={bg_vol}[bg_music];"
+                f"[0:a]asplit=2[sc][voice];"
+                f"[bg_music][sc]sidechaincompress=threshold={thresh}:ratio={ratio}:attack={attack}:release={release}[ducked_bg];"
+                f"[voice][ducked_bg]amix=inputs=2:duration=first[mixed];"
+                f"[mixed]loudnorm=I=-16:LRA=11:TP=-1.5[final_audio]"
+            )
+            mix_cmd = [
+                "ffmpeg", "-y",
+                "-i", temp_short_unmixed_path,
+                "-stream_loop", "-1",
+                "-i", bg_music_file,
+                "-filter_complex", filter_complex,
+                "-map", "0:v",
+                "-map", "[final_audio]",
+                "-c:v", "copy",
+                "-c:a", "aac",
+                "-b:a", "192k",
+                final_short_path
+            ]
+            for attempt in range(3):
+                try:
+                    subprocess.run(mix_cmd, capture_output=True, text=True, check=True)
+                    break
+                except subprocess.CalledProcessError as e:
+                    if attempt == 2:
+                        raise
+                    log.info(f"[Short Generator] BGM mix attempt {attempt+1} failed, retrying: {e.stderr[:200]}")
+                    time.sleep(1)
+            if os.path.exists(temp_short_unmixed_path):
+                os.remove(temp_short_unmixed_path)
+        else:
+            shutil.move(temp_short_unmixed_path, final_short_path)
+
     def generate(self, run_dir, orchestrator=None):
         """Assembles the short, returns the result dict."""
         log.info(f"[Short Generator] Initializing Short generation in: {run_dir}")
@@ -393,6 +471,7 @@ class ShortGenerator:
                         "-map", "[v]",
                         "-map", "1:a",
                         "-c:v", "libx264",
+                        "-preset", "ultrafast",
                         "-r", str(fps),
                         "-c:a", "aac",
                         "-b:a", "192k",
@@ -410,6 +489,7 @@ class ShortGenerator:
                         "-map", "[v]",
                         "-map", "1:a",
                         "-c:v", "libx264",
+                        "-preset", "ultrafast",
                         "-r", str(fps),
                         "-c:a", "aac",
                         "-b:a", "192k",
@@ -455,6 +535,7 @@ class ShortGenerator:
                         "-map", "[v]",
                         "-map", "1:a",
                         "-c:v", "libx264",
+                        "-preset", "ultrafast",
                         "-r", str(fps),
                         "-c:a", "aac",
                         "-b:a", "192k",
@@ -469,6 +550,7 @@ class ShortGenerator:
                         "-i", rel_audio_name,
                         "-vf", combined_filter,
                         "-c:v", "libx264",
+                        "-preset", "ultrafast",
                         "-r", str(fps),
                         "-c:a", "aac",
                         "-b:a", "192k",
@@ -495,83 +577,10 @@ class ShortGenerator:
                     time.sleep(1)
             scene_mp4_files.append(rel_mp4_name)
 
-        # Concat - Windows fix with retry
-        concat_list_path = os.path.join(short_temp_dir, "concat_list.txt")
-        with open(concat_list_path, "w", encoding="utf-8") as f:
-            for f_name in scene_mp4_files:
-                f.write(f"file '{f_name}'\n")
-
-        temp_short_unmixed_name = "final_short_temp.mp4"
-        temp_short_unmixed_path = os.path.join(run_dir, temp_short_unmixed_name)
-        final_short_path = os.path.join(run_dir, "final_short.mp4")
-
-        concat_cmd = [
-            "ffmpeg", "-y",
-            "-f", "concat",
-            "-safe", "0",
-            "-i", "concat_list.txt",
-            "-c", "copy",
-            f"../{temp_short_unmixed_name}"
-        ]
-        # Windows fix: retry concat on file locking
-        for attempt in range(3):
-            try:
-                subprocess.run(concat_cmd, cwd=short_temp_dir, capture_output=True, text=True, check=True)
-                break
-            except subprocess.CalledProcessError as e:
-                if attempt == 2:
-                    raise
-                log.info(f"[Short Generator] Concat attempt {attempt+1} failed, retrying: {e.stderr[:200]}")
-                time.sleep(1)
-
-        # Mix bgm
+        # Concat + mix BGM in one pass
         bg_music_file = state["steps"].get("AUDIO_GEN", {}).get("output", {}).get("bg_music_file")
-        audio_settings = self.config.get("audio_settings", {})
-
-        if bg_music_file and os.path.exists(bg_music_file):
-            log.info(f"[Short Generator] Mixing BGM for Short...")
-            # For shorts, mix BGM volume slightly louder (e.g. +33% increase over horizontal)
-            bg_vol = audio_settings.get("bg_music_volume", 0.15) * 1.33
-            thresh = audio_settings.get("ducking_threshold", 0.10)
-            ratio = audio_settings.get("ducking_ratio", 4.0)
-            attack = audio_settings.get("ducking_attack", 200)
-            release = audio_settings.get("ducking_release", 800)
-
-            filter_complex = (
-                f"[1:a]volume={bg_vol}[bg_music];"
-                f"[0:a]asplit=2[sc][voice];"
-                f"[bg_music][sc]sidechaincompress=threshold={thresh}:ratio={ratio}:attack={attack}:release={release}[ducked_bg];"
-                f"[voice][ducked_bg]amix=inputs=2:duration=first[mixed];"
-                f"[mixed]loudnorm=I=-16:LRA=11:TP=-1.5[final_audio]"
-            )
-
-            mix_cmd = [
-                "ffmpeg", "-y",
-                "-i", temp_short_unmixed_path,
-                "-stream_loop", "-1",
-                "-i", bg_music_file,
-                "-filter_complex", filter_complex,
-                "-map", "0:v",
-                "-map", "[final_audio]",
-                "-c:v", "copy",
-                "-c:a", "aac",
-                "-b:a", "192k",
-                final_short_path
-            ]
-            # Windows fix: retry BGM mixing on file locking
-            for attempt in range(3):
-                try:
-                    subprocess.run(mix_cmd, capture_output=True, text=True, check=True)
-                    break
-                except subprocess.CalledProcessError as e:
-                    if attempt == 2:
-                        raise
-                    log.info(f"[Short Generator] BGM mix attempt {attempt+1} failed, retrying: {e.stderr[:200]}")
-                    time.sleep(1)
-            if os.path.exists(temp_short_unmixed_path):
-                os.remove(temp_short_unmixed_path)
-        else:
-            shutil.move(temp_short_unmixed_path, final_short_path)
+        final_short_path = os.path.join(run_dir, "final_short.mp4")
+        self._concat_and_mix(short_temp_dir, scene_mp4_files, bg_music_file, run_dir, final_short_path)
 
         # Clean up temporary dir - Windows fix with retry
         try:

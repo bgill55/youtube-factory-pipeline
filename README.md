@@ -35,10 +35,11 @@ Each agent is **independently usable**, **provider-agnostic**, and **configured 
 | `AudioGeneratorAgent` | BGM via Stable Audio 3 | Ducking, volume automation |
 | `VideoAssemblerAgent` | FFmpeg assembly | Subtitles, ducking, 4K output |
 | `CommentAgent` | YouTube comment management | Reply, moderate, analyze sentiment |
-| `ShortGenerator` | 9:16 vertical clips | Auto-scene selection ≤58s |
-| `UploaderAgent` | YouTube Data API v3 | Playlists, thumbnails, Shorts |
+| `ShortGenerator` | 9:16 vertical clips | Auto-scene selection ≤58s, `-preset ultrafast`, single-pass concat+mix |
+| `UploaderAgent` | YouTube Data API v3 | Playlists, thumbnails, Shorts, A/B thumbnail variants |
 | `GuideGeneratorAgent` | HTML resource pages | SEO-optimized, deployable to GitHub Pages |
 | `CommunityPostAgent` | YouTube Community posts | Auto-generated from video outputs |
+| `SelfCritiqueAgent` | Quality audit | LLM-graded title/thumbnail/script/SEO, saves `self_critique.json` |
 
 ---
 
@@ -133,16 +134,18 @@ GEMINI_API_KEY=xxx
 
 ## Architecture
 
-### Standard Pipeline
+### Standard Pipeline (v0.5.0+)
 ```
 Research → SCRAPE → IDEA_GEN → SCRIPTWRITE → GUIDE_GEN → 
-VOICEOVER → VISUALS → AUDIO_GEN → ASSEMBLY → SHORTS → GUIDE_DEPLOY → UPLOAD
+VOICEOVER → VISUALS → AUDIO_GEN → ASSEMBLY → SHORTS → 
+GUIDE_DEPLOY → UPLOAD → SELF_CRITIQUE
 ```
 
 ### Asset-First Pipeline (v0.3.0+)
 ```
 VIDEO_ANALYSIS → SCRIPT_BUILD → GUIDE → VOICEOVER → 
-VISUALS → AUDIO_GEN → ASSEMBLY → SHORTS → GUIDE_DEPLOY → UPLOAD
+VISUALS → AUDIO_GEN → ASSEMBLY → SHORTS → GUIDE_DEPLOY → 
+UPLOAD → SELF_CRITIQUE
 ```
 
 ```text
@@ -231,6 +234,44 @@ VISUALS → AUDIO_GEN → ASSEMBLY → SHORTS → GUIDE_DEPLOY → UPLOAD
 ```
 
 **All LLM calls route through FreeLLMAPI** → automatic provider failover, penalty tracking, system prompt injection.
+
+---
+
+## What's New in v0.5.0
+
+### SelfCritiqueAgent — Post-Pipeline Quality Audit
+A new `SELF_CRITIQUE` stage runs after upload. The agent feeds the final script, video URL, and guide to an LLM which grades 6 dimensions (title CTR, thumbnail, timeliness, script quality, SEO, overall) on a 1-10 scale. Saves a `self_critique.json` report in the run directory.
+
+```python
+from youtube_factory.agents.self_critique import SelfCritiqueAgent
+agent = SelfCritiqueAgent(config)
+report = agent.run(inputs)
+# report["critique"]["final_grade"] → "A", "B", "C", etc.
+```
+
+### LLM Structured Output
+`response_schema` parameter added to `FreeLLMAPIClient.query()` and `query_llm()`. Pass a JSON schema dict to enable native `json_schema` structured output mode on supported providers, with automatic fallback to `json_object` + prompt injection.
+
+```python
+result = query_llm(config, prompt, user_msg, response_schema={
+    "type": "object",
+    "properties": {"title": {"type": "string"}, "score": {"type": "number"}},
+    "required": ["title", "score"]
+})
+```
+
+### JSON Repair Utilities (`json_utils`)
+`clean_llm_response()` strips markdown fences and trailing commas. `repair_json()` tries 4 fallback strategies (direct parse → array extraction → individual object recovery → single object extraction), making fragile agent parsing logic a thing of the past.
+
+### Analytics Caching
+`AnalyticsAgent.get_channel_stats()`, `get_video_performance()`, and `get_analytics_summary()` now cache results in-memory with a 1-hour TTL. Pass `force_refresh=True` to bypass cache.
+
+### Thumbnail A/B Testing
+`UploaderAgent` now uploads `thumbnail_a.jpg`, `thumbnail_b.jpg`, `thumbnail_c.jpg` variants alongside the primary thumbnail. Saves `thumbnail_ab_test.json` with `check_at` timestamp (+7 days) for scheduled CTR comparison.
+
+### FFmpeg Pipeline Batching
+- `-preset ultrafast` added to all 4 per-scene ffmpeg render commands in the `ShortGenerator`.
+- New `_concat_and_mix()` method handles single-scene (remux) and multi-scene (filter complex concat + BGM ducking) in a single pass, reducing intermediate file I/O.
 
 ---
 

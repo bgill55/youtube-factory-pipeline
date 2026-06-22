@@ -201,6 +201,7 @@ async def query_llm_async(
     temperature: float = None,
     max_tokens: int = None,
     context: dict = None,
+    response_schema: dict = None,
 ) -> str:
     """
     Async version of query_llm with LM Studio fallback to FreeLLMAPI.
@@ -226,13 +227,14 @@ async def query_llm_async(
     if lm_studio_client:
         log.info("Attempting LLM query with LM Studio...")
         try:
+            response_format = "json" if (require_json or response_schema) else None
             response = lm_studio_client.query(
                 user_prompt=user_prompt,
                 system_prompt=system_prompt,
                 message_history=message_history,
                 temperature=temperature,
                 max_tokens=max_tokens,
-                response_format="json" if require_json else None,
+                response_format=response_format,
             )
             log.info(f"LM Studio query successful. Model: {response.model_used}")
             return response.text
@@ -249,13 +251,15 @@ async def query_llm_async(
         max_retries = config.get("freellmapi", {}).get("max_retries", 2)
         for attempt in range(max_retries + 1):
             try:
+                response_format = "json" if (require_json and not response_schema) else None
                 response = freellmapi_client.query(
                     user_prompt=user_prompt,
                     system_prompt=system_prompt,
                     message_history=message_history,
                     temperature=temperature,
                     max_tokens=max_tokens,
-                    response_format="json" if require_json else None,
+                    response_format=response_format,
+                    response_schema=response_schema,
                     context=freellmapi_context,
                 )
                 log.info(f"FreeLLMAPI query successful. Routed via: {response.routed_via}, Model: {response.model_used}")
@@ -284,6 +288,7 @@ def query_llm(
     temperature: float = None,
     max_tokens: int = None,
     context: dict = None,
+    response_schema: dict = None,
 ) -> str:
     """
     Synchronous wrapper for query_llm_async.
@@ -302,6 +307,7 @@ def query_llm(
             temperature=temperature,
             max_tokens=max_tokens,
             context=context,
+            response_schema=response_schema,
         ))
     else:
         # Running inside an event loop - run in a separate thread with its own event loop
@@ -317,6 +323,7 @@ def query_llm(
                 temperature=temperature,
                 max_tokens=max_tokens,
                 context=context,
+                response_schema=response_schema,
             ))
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(run_in_thread)

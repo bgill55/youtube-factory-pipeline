@@ -1,6 +1,6 @@
 """YouTube Factory Pipeline - Modular video production agents."""
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 # Core orchestration
 from youtube_factory.orchestrator import (
@@ -18,6 +18,7 @@ from youtube_factory.orchestrator import (
     STAGE_SHORTS,
     STAGE_GUIDE_DEPLOY,
     STAGE_UPLOAD,
+    STAGE_SELF_CRITIQUE,
     STAGE_COMPLETED,
     STAGE_VIDEO_ANALYSIS,
     STAGE_SCRIPT_BUILD,
@@ -63,8 +64,10 @@ from youtube_factory.agents.scraper import WebsiteScraper
 from youtube_factory.agents.script_builder import ScriptBuilderAgent
 from youtube_factory.agents.video_analysis import VideoAnalysisAgent
 from youtube_factory.agents.comments import CommentAgent
+from youtube_factory.agents.self_critique import SelfCritiqueAgent
 
 # Utilities
+from youtube_factory.json_utils import clean_llm_response, repair_json
 from youtube_factory.scheduler import BackgroundScheduler
 from youtube_factory.shortio import ShortioManager
 from youtube_factory.guide_deploy import GuideDeployer
@@ -126,10 +129,14 @@ __all__ = [
     "ScriptBuilderAgent",
     "VideoAnalysisAgent",
     "CommentAgent",
+    "SelfCritiqueAgent",
     # Utilities
     "BackgroundScheduler",
     "ShortioManager",
     "GuideDeployer",
     "PlaylistManager",
     "VideoProviderManager",
+    "SelfCritiqueAgent",
+    "clean_llm_response",
+    "repair_json",
 ]

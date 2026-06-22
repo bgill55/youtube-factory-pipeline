@@ -7,6 +7,8 @@ import os
 import re
 import json
 import logging
+import time
+import hashlib
 from datetime import datetime, timedelta
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -15,6 +17,29 @@ from googleapiclient.discovery import build
 
 from youtube_factory.logging_utils import get_logger
 logger = get_logger("agent_analytics")
+
+_cache = {}
+CACHE_TTL = 3600  # 1 hour default
+
+
+def _cache_key(method, *args, **kwargs):
+    raw = f"{method}:{args}:{sorted(kwargs.items())}"
+    return hashlib.md5(raw.encode()).hexdigest()
+
+
+def _cache_get(key):
+    entry = _cache.get(key)
+    if entry and time.time() - entry["ts"] < CACHE_TTL:
+        return entry["data"]
+    return None
+
+
+def _cache_set(key, data):
+    _cache[key] = {"data": data, "ts": time.time()}
+
+
+def clear_cache():
+    _cache.clear()
 
 
 class AnalyticsAgent:
@@ -98,8 +123,12 @@ class AnalyticsAgent:
 
     # ==================== DATA API v3 METHODS ====================
 
-    def get_channel_stats(self):
+    def get_channel_stats(self, force_refresh=False):
         """Get overall channel statistics from Data API."""
+        if not force_refresh:
+            cached = _cache_get("channel_stats")
+            if cached:
+                return cached
         youtube = self._get_youtube_service()
         channel_id = self._get_channel_id(youtube)
 
@@ -116,7 +145,7 @@ class AnalyticsAgent:
         stats = ch.get("statistics", {})
         snippet = ch.get("snippet", {})
 
-        return {
+        result = {
             "channel_id": channel_id,
             "channel_title": snippet.get("title", ""),
             "channel_description": snippet.get("description", ""),
@@ -127,9 +156,16 @@ class AnalyticsAgent:
             "uploads_playlist": ch.get("contentDetails", {}).get("relatedPlaylists", {}).get("uploads", ""),
             "fetched_at": datetime.now().isoformat()
         }
+        _cache_set("channel_stats", result)
+        return result
 
-    def get_video_performance(self, limit=50):
+    def get_video_performance(self, limit=50, force_refresh=False):
         """Fetch all videos with performance stats, sorted by views."""
+        cache_key = f"video_performance:{limit}"
+        if not force_refresh:
+            cached = _cache_get(cache_key)
+            if cached:
+                return cached
         youtube = self._get_youtube_service()
         channel_id = self._get_channel_id(youtube)
 
@@ -192,7 +228,9 @@ class AnalyticsAgent:
                 )
                 r["view_score"] = round(r["views"] / max_views * 100, 1)
 
-        return results[:limit]
+        output = results[:limit]
+        _cache_set(cache_key, output)
+        return output
 
     # ==================== ANALYTICS API v2 METHODS ====================
 
@@ -347,10 +385,14 @@ class AnalyticsAgent:
 
     # ==================== COMBINED ANALYSIS ====================
 
-    def get_analytics_summary(self):
+    def get_analytics_summary(self, force_refresh=False):
         """Generate a comprehensive analytics summary combining Data API + Analytics API."""
-        channel = self.get_channel_stats()
-        videos = self.get_video_performance(limit=100)
+        if not force_refresh:
+            cached = _cache_get("analytics_summary")
+            if cached:
+                return cached
+        channel = self.get_channel_stats(force_refresh=force_refresh)
+        videos = self.get_video_performance(limit=100, force_refresh=force_refresh)
 
         # Analytics API data (may fail if scope not yet authorized)
         analytics_data = {}
@@ -395,7 +437,7 @@ class AnalyticsAgent:
 
         patterns = self._analyze_patterns(videos)
 
-        return {
+        result = {
             "channel": channel,
             "summary": {
                 "total_videos": len(videos),
@@ -415,6 +457,8 @@ class AnalyticsAgent:
             "all_videos": videos,
             "fetched_at": datetime.now().isoformat()
         }
+        _cache_set("analytics_summary", result)
+        return result
 
     def _analyze_patterns(self, videos):
         """Identify performance patterns across videos."""

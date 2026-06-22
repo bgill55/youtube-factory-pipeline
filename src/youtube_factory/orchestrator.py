@@ -24,6 +24,7 @@ STAGE_ASSEMBLY = "ASSEMBLY"
 STAGE_SHORTS = "SHORTS"
 STAGE_GUIDE_DEPLOY = "GUIDE_DEPLOY"
 STAGE_UPLOAD = "UPLOAD"
+STAGE_SELF_CRITIQUE = "SELF_CRITIQUE"
 STAGE_COMPLETED = "COMPLETED"
 
 # Asset-First pipeline stages
@@ -42,7 +43,8 @@ STAGES = [
     STAGE_ASSEMBLY,
     STAGE_GUIDE_DEPLOY,
     STAGE_SHORTS,
-    STAGE_UPLOAD
+    STAGE_UPLOAD,
+    STAGE_SELF_CRITIQUE
 ]
 
 # Asset-First pipeline (bypasses research/idea/script/guide)
@@ -56,7 +58,8 @@ ASSET_FIRST_STAGES = [
     STAGE_ASSEMBLY,
     STAGE_SHORTS,
     STAGE_GUIDE_DEPLOY,
-    STAGE_UPLOAD
+    STAGE_UPLOAD,
+    STAGE_SELF_CRITIQUE
 ]
 
 class PipelineOrchestrator:
@@ -285,6 +288,7 @@ class PipelineOrchestrator:
         from .agent_scraper import WebsiteScraper
         from .agent_video_analysis import VideoAnalysisAgent
         from .agent_script_builder import ScriptBuilderAgent
+        from .agent_self_critique import SelfCritiqueAgent
 
         agents = {
             STAGE_RESEARCH: ResearchAgent(self.config),
@@ -299,6 +303,7 @@ class PipelineOrchestrator:
             STAGE_GUIDE_DEPLOY: GuideGeneratorAgent(self.config),
             STAGE_SHORTS: ShortGenerator(self.config),
             STAGE_UPLOAD: UploaderAgent(self.config),
+            STAGE_SELF_CRITIQUE: SelfCritiqueAgent(self.config),
             STAGE_VIDEO_ANALYSIS: VideoAnalysisAgent(self.config),
             STAGE_SCRIPT_BUILD: ScriptBuilderAgent(self.config)
         }
@@ -634,6 +639,14 @@ class PipelineOrchestrator:
                                 "idea_output": idea_output,
                                 "guide_output": state["steps"].get(STAGE_GUIDE_DEPLOY, {}).get("output"),
                                 "short_output": state["steps"].get(STAGE_SHORTS, {}).get("output"),
+                                "run_dir": run_dir
+                            }
+                        elif current_stage == STAGE_SELF_CRITIQUE:
+                            inputs = {
+                                "idea_output": state["steps"].get(STAGE_IDEA, {}).get("output") or {},
+                                "script_output": state["steps"].get(STAGE_SCRIPT, {}).get("output") or {},
+                                "upload_output": state["steps"].get(STAGE_UPLOAD, {}).get("output") or {},
+                                "guide_output": state["steps"].get(STAGE_GUIDE_DEPLOY, {}).get("output") or {},
                                 "run_dir": run_dir
                             }
                         # Skip SHORTS if disabled in config

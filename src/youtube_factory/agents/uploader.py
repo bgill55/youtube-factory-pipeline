@@ -2,6 +2,7 @@ import os
 import json
 import socket
 import sys
+from datetime import datetime, timedelta
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -325,6 +326,31 @@ class UploaderAgent:
             except Exception as e:
                 log.warning("Could not upload custom thumbnail: %s", str(e))
                 log.info("Note: Custom thumbnails require YouTube channel phone verification (standard API rule).")
+
+        # 4b. Upload A/B thumbnail variants
+        thumbnail_variants = []
+        for suffix in ["_a", "_b", "_c"]:
+            variant_path = os.path.join(run_dir, f"thumbnail{suffix}.jpg")
+            if os.path.exists(variant_path):
+                try:
+                    log.info("Uploading thumbnail variant %s...", suffix)
+                    youtube.thumbnails().set(
+                        videoId=video_id,
+                        media_body=MediaFileUpload(variant_path, mimetype="image/jpeg")
+                    ).execute()
+                    thumbnail_variants.append({"suffix": suffix, "path": variant_path, "uploaded": True})
+                except Exception as e:
+                    log.warning("Could not upload thumbnail variant %s: %s", suffix, str(e))
+        if thumbnail_variants:
+            ab_meta = {
+                "video_id": video_id,
+                "thumbnails_uploaded": thumbnail_variants,
+                "uploaded_at": datetime.now().isoformat(),
+                "check_at": (datetime.now() + timedelta(days=7)).isoformat()
+            }
+            ab_path = os.path.join(run_dir, "thumbnail_ab_test.json")
+            with open(ab_path, "w", encoding="utf-8") as f:
+                json.dump(ab_meta, f, indent=2)
 
         log.info("Video uploaded successfully! Video URL: %s", video_url)
 
